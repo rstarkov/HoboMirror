@@ -8,6 +8,7 @@ using System.Security.Permissions;
 using System.Text;
 using Alphaleonis.Win32.Filesystem;
 using Alphaleonis.Win32.Vss;
+using RT.Util.ExtensionMethods;
 
 namespace HoboMirror
 {
@@ -106,7 +107,7 @@ namespace HoboMirror
             var snapshots = bkpComponents.QuerySnapshots();
             foreach (var vol in Volumes.Values)
             {
-                var snap = snapshots.Single(s => string.Equals(s.OriginalVolumeName, vol.UniquePath, StringComparison.OrdinalIgnoreCase));
+                var snap = snapshots.Where(s => string.Equals(s.OriginalVolumeName, vol.UniquePath, StringComparison.OrdinalIgnoreCase)).MaxElement(s => s.CreationTimestamp);
                 vol.SnapshotPath = snap.SnapshotDeviceObject;
                 Console.WriteLine("Volume {0} [aka {1}, unique {2}] snapshot UNC: {3}", vol.Path, vol.DisplayPath, vol.UniquePath, vol.SnapshotPath);
             }
