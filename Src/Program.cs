@@ -38,6 +38,11 @@ namespace HoboMirror
             ConsoleUtil.WriteLine(text.Color(ConsoleColor.Yellow));
         }
 
+        private static void LogError(string text)
+        {
+            ConsoleUtil.WriteLine(text.Color(ConsoleColor.Red));
+        }
+
         private static void DeleteFile(FileInfo file)
         {
             if (file.IsReparsePoint())
@@ -77,10 +82,20 @@ namespace HoboMirror
             Console.Title = sourcePathForDisplay(from.FullName);
 
             // Enumerate files and directories
-            var fromFiles = from.GetFiles().ToDictionary(d => d.Name);
-            var toFiles = to.GetFiles().ToDictionary(d => d.Name);
-            var fromDirs = from.GetDirectories().ToDictionary(d => d.Name);
-            var toDirs = to.GetDirectories().ToDictionary(d => d.Name);
+            Dictionary<string, FileInfo> fromFiles, toFiles;
+            Dictionary<string, DirectoryInfo> fromDirs, toDirs;
+            try
+            {
+                fromFiles = from.GetFiles().ToDictionary(d => d.Name);
+                toFiles = to.GetFiles().ToDictionary(d => d.Name);
+                fromDirs = from.GetDirectories().ToDictionary(d => d.Name);
+                toDirs = to.GetDirectories().ToDictionary(d => d.Name);
+            }
+            catch (UnauthorizedAccessException)
+            {
+                LogError($"Unauthorized access: {from.FullName}");
+                return;
+            }
 
             // Delete mirrored files missing in source
             foreach (var toFile in toFiles.Values.Where(toFile => !fromFiles.ContainsKey(toFile.Name)))
@@ -136,7 +151,7 @@ namespace HoboMirror
                 catch
                 {
 #warning TODO: figure out what's happening here.
-                    Console.WriteLine($"Could not SetAccessControl on {toFile.FullName}");
+                    LogError($"Could not SetAccessControl on {toFile.FullName}");
                 }
                 toFile.Attributes = fromFile.Attributes;
                 File.SetTimestampsUtc(toFile.FullName, fromFile.CreationTimeUtc, fromFile.LastAccessTimeUtc, fromFile.LastWriteTimeUtc, true, PathFormat.FullPath);
@@ -195,14 +210,24 @@ namespace HoboMirror
                 Mirror(fromDir, toDir, sourcePathForDisplay);
 
                 // Update attributes
-                try { toDir.SetAccessControl(fromDir.GetAccessControl()); }
+                var fromAccess = fromDir.GetAccessControl();
+                var fromAttrs = fromDir.Attributes; // also loads and caches file times
+                try
+                {
+                    try { toDir.SetAccessControl(fromAccess); }
                 catch
                 {
 #warning TODO: figure out what's happening here.
-                    Console.WriteLine($"Could not SetAccessControl on {toDir.FullName}");
+                        LogError($"Could not SetAccessControl on {toDir.FullName}");
                 }
-                toDir.Attributes = fromDir.Attributes;
+                    toDir.Attributes = fromAttrs;
                 Directory.SetTimestampsUtc(toDir.FullName, fromDir.CreationTimeUtc, fromDir.LastAccessTimeUtc, fromDir.LastWriteTimeUtc, PathFormat.FullPath);
+            }
+                catch (UnauthorizedAccessException)
+                {
+                    LogError($"Unable to set directory attributes (unauthorized access): {toDir.FullName}");
+                    return;
+                }
             }
         }
 
