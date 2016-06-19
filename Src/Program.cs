@@ -1,64 +1,176 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Reflection;
 using System.Security.AccessControl;
 using System.Text.RegularExpressions;
 using Alphaleonis.Win32.Filesystem;
+using RT.Util;
+using RT.Util.CommandLine;
 using RT.Util.Consoles;
 using RT.Util.ExtensionMethods;
+using IO = System.IO;
+
+// sort by how many times a folder has been seen to change before, so that unusual changes are at the top
 
 namespace HoboMirror
 {
     class Program
     {
-        static List<CopyTask> Tasks = new List<CopyTask>
-        {
-            new CopyTask(@"D:\", @"E:\Mirror\D\"),
-        };
+        static CmdLine Args;
 
-        static void Main(string[] args)
+        static IO.StreamWriter ActionLog, ChangeLog, ErrorLog, DebugLog;
+
+        static int Main(string[] args)
         {
-            LogAction("===============");
-            LogChange("===============", null);
-            LogError("===============");
-            var volumes = Tasks.GroupBy(t => t.FromVolume).Select(g => g.Key).ToArray();
-            using (var vsc = new VolumeShadowCopy(volumes))
-                foreach (var task in Tasks)
+            if (args.Length == 2 && args[0] == "--post-build-check")
+                return Ut.RunPostBuildChecks(args[1], Assembly.GetExecutingAssembly());
+
+#if !DEBUG
+            try
+#endif
+            {
+                return DoMain(args);
+            }
+#if !DEBUG
+            catch (Exception e)
+            {
+                ConsoleUtil.WriteLine("Unhandled exception:".Color(ConsoleColor.Red));
+                foreach (var ex in e.SelectChain(ex => ex.InnerException))
                 {
-                    var fromPath = Path.Combine(vsc.Volumes[task.FromVolume].SnapshotPath, task.FromPath.Substring(task.FromVolume.Length));
-                    if (!Directory.Exists(task.ToPath))
-                        CreateDirectory(task.ToPath);
-                    Mirror(new DirectoryInfo(fromPath), new DirectoryInfo(task.ToPath), str => str.Replace(vsc.Volumes[task.FromVolume].SnapshotPath, task.FromVolume).Replace(@"\\", @"\"));
+                    ConsoleUtil.WriteLine(ex.GetType().Name.Color(ConsoleColor.Magenta));
+                    ConsoleUtil.WriteLine(ex.StackTrace);
                 }
-            LogChange("DIRECTORIES WITH AT LEAST ONE CHANGE: ", null);
-            foreach (var chg in Changes.OrderBy(path => path.Count(ch => ch == '\\')).ThenBy(path => path))
-                LogChange(chg, null);
+                return -1;
+            }
+#endif
+        }
+
+        static int DoMain(string[] args)
+        {
+            // Parse command-line arguments
+            Args = CommandLineParser.ParseOrWriteUsageToConsole<CmdLine>(args);
+            if (Args == null)
+                return -1;
+
+            // Initialise log files
+            var startTime = DateTime.UtcNow;
+            if (Args.LogPath != null)
+            {
+                if (Args.LogPath == "")
+                    Args.LogPath = PathUtil.AppPath;
+                ActionLog = new IO.StreamWriter(IO.File.Open(Path.Combine(Args.LogPath, $"HoboMirror-Actions.{DateTime.Today:yyyy-MM-dd}.txt"), IO.FileMode.Append, IO.FileAccess.Write, IO.FileShare.Read));
+                ChangeLog = new IO.StreamWriter(IO.File.Open(Path.Combine(Args.LogPath, $"HoboMirror-Changes.{DateTime.Today:yyyy-MM-dd}.txt"), IO.FileMode.Append, IO.FileAccess.Write, IO.FileShare.Read));
+                ErrorLog = new IO.StreamWriter(IO.File.Open(Path.Combine(Args.LogPath, $"HoboMirror-Errors.{DateTime.Today:yyyy-MM-dd}.txt"), IO.FileMode.Append, IO.FileAccess.Write, IO.FileShare.Read));
+                DebugLog = new IO.StreamWriter(IO.File.Open(Path.Combine(Args.LogPath, $"HoboMirror-Debug.{DateTime.Today:yyyy-MM-dd}.txt"), IO.FileMode.Append, IO.FileAccess.Write, IO.FileShare.Read));
+            }
+
+            try
+            {
+                // Parse volumes to be snapshotted
+                var tasks = Args.FromPath.Zip(Args.ToPath, (from, to) => new
+                {
+                    FromPath = from,
+                    ToPath = to,
+                    ToGuard = Path.Combine(to, "__HoboMirrorTarget__.txt"),
+                    FromVolume =
+                        Regex.Match(from, @"^\\\\\?\\Volume{[^}]+}\\").Apply(match => match.Success ? match.Groups[0].Value : null)
+                        ?? Regex.Match(from, @"^\w:\\").Apply(match => match.Success ? match.Groups[0].Value : null)
+                        ?? Ut.Throw<string>(new InvalidOperationException($"Expected absolute path: {from}")) // this should be taken care of by the CmdLine specification, so throw here
+                });
+
+                // Log header
+                LogAll("==============");
+                LogAll($"Started at {DateTime.Now}");
+                foreach (var task in tasks)
+                    LogAll($"    Mirror task: from “{task.FromPath}” to “{task.ToPath}”");
+
+                // Refuse to mirror without a guard file
+                foreach (var task in tasks)
+                {
+                    if (!File.Exists(task.ToGuard) || !File.ReadAllText(task.ToGuard).ToLower().Contains("allow"))
+                    {
+                        LogError($"Target path is not marked with a guard file: {task.ToPath}");
+                        LogError($"Due to the potentially destructive nature of mirroring, every mirror destination must contain a guard file. This path does not. Mirroring aborted.");
+                        LogError($"To allow mirroring to this path, please create a file at {task.ToGuard}. The file must contain the word “allow”.");
+                        LogError($"Remember that HoboMirror will delete files at this path without confirmation.");
+                        return -1;
+                    }
+                }
+
+                // Perform the mirroring
+                var volumes = tasks.GroupBy(t => t.FromVolume).Select(g => g.Key).ToArray();
+                using (var vsc = new VolumeShadowCopy(volumes))
+                    foreach (var task in tasks)
+                    {
+                        var fromPath = Path.Combine(vsc.Volumes[task.FromVolume].SnapshotPath, task.FromPath.Substring(task.FromVolume.Length));
+                        if (!Directory.Exists(task.ToPath))
+                            CreateDirectory(task.ToPath);
+                        Mirror(new DirectoryInfo(fromPath), new DirectoryInfo(task.ToPath), str => str.Replace(vsc.Volumes[task.FromVolume].SnapshotPath, task.FromVolume).Replace(@"\\", @"\"));
+                    }
+
+                // List changed directories
+                LogChange("DIRECTORIES WITH AT LEAST ONE CHANGE: ", null);
+                foreach (var chg in Changes.OrderBy(path => path.Count(ch => ch == '\\')).ThenBy(path => path))
+                    LogChange(chg, null);
+
+                return 0;
+            }
+            finally
+            {
+                // Close log files
+                if (Args.LogPath != null)
+                {
+                    foreach (var log in new[] { ActionLog, ChangeLog, ErrorLog, DebugLog })
+                    {
+                        log.WriteLine($"Ended at {DateTime.Now}. Time taken: {(DateTime.UtcNow - startTime).TotalMinutes:#,0.0} minutes");
+                        log.Dispose();
+                    }
+                }
+            }
         }
 
         private static void LogAction(string text)
         {
-            ConsoleUtil.WriteLine(text.Color(ConsoleColor.White));
-            File.AppendAllLines("log-actions.txt", new[] { text });
+            ConsoleUtil.WriteParagraphs(text.Color(ConsoleColor.White));
+            ActionLog?.WriteLine(text);
+            ActionLog?.Flush();
         }
 
         private static void LogChange(string text, string path)
         {
-            ConsoleUtil.WriteLine(text.Color(ConsoleColor.Yellow));
-            File.AppendAllLines("log-changes.txt", new[] { text });
             if (path != null)
                 Changes.Add(Path.GetDirectoryName(path));
+            ConsoleUtil.WriteParagraphs((text + path).Color(ConsoleColor.Yellow));
+            ChangeLog?.WriteLine(text + path);
+            ChangeLog?.Flush();
         }
 
         private static void LogError(string text)
         {
-            ConsoleUtil.WriteLine(text.Color(ConsoleColor.Red));
-            File.AppendAllLines("log-errors.txt", new[] { text });
+            ConsoleUtil.WriteParagraphs(text.Color(ConsoleColor.Red));
+            ErrorLog?.WriteLine(text);
+            ErrorLog?.Flush();
         }
 
         private static void LogDebug(string text)
         {
-            ConsoleUtil.WriteLine(text.Color(ConsoleColor.DarkGray));
-            File.AppendAllLines("log-debug.txt", new[] { text });
+            ConsoleUtil.WriteParagraphs(text.Color(ConsoleColor.DarkGray));
+            DebugLog?.WriteLine(text);
+            DebugLog?.Flush();
+        }
+
+        private static void LogAll(string text)
+        {
+            ConsoleUtil.WriteParagraphs(text.Color(ConsoleColor.Green));
+            ActionLog?.WriteLine(text);
+            ActionLog?.Flush();
+            ChangeLog?.WriteLine(text);
+            ChangeLog?.Flush();
+            ErrorLog?.WriteLine(text);
+            ErrorLog?.Flush();
+            DebugLog?.WriteLine(text);
+            DebugLog?.Flush();
         }
 
         private static HashSet<string> Changes = new HashSet<string>();
@@ -136,7 +248,7 @@ namespace HoboMirror
                     else
                         (fsi as DirectoryInfo).SetAccessControl(data.DirectorySecurity);
                 }
-                catch (System.IO.IOException)
+                catch (IO.IOException)
                 {
                     LogError($"Unable to set {(fsi is FileInfo ? "file" : "directory")} security parameters: {fsi.FullName}");
 #warning TODO: why does this fail on many files?
@@ -172,6 +284,10 @@ namespace HoboMirror
                 LogError($"Unauthorized access: {from.FullName}");
                 return;
             }
+
+            // Completely ignore the guard file (in any directory)
+            fromFiles.RemoveAllByValue(f => f.Name == "__HoboMirrorTarget__.txt");
+            toFiles.RemoveAllByValue(f => f.Name == "__HoboMirrorTarget__.txt");
 
             // Delete mirrored files missing in source
             foreach (var toFile in toFiles.Values.Where(toFile => !fromFiles.ContainsKey(toFile.Name)))
@@ -238,13 +354,11 @@ namespace HoboMirror
                 // The easiest thing to do is to always delete and re-create it.
                 var toDir = toDirs.Get(fromDir.Name, null);
                 if (toDir != null)
-                {
-                    //Console.WriteLine($"Delete existing directory to copy reparse point: {toDir.FullName}");
                     DeleteDirectory(toDir);
-                }
+#warning TODO: detect change properly and improve logging
                 var destPath = Path.Combine(to.FullName, fromDir.Name);
                 var tgt = File.GetLinkTargetInfo(fromDir.FullName);
-                Console.WriteLine($"Create reparse point for {sourcePathForDisplay(fromDir.FullName)}\r\n   at {destPath}\r\n   linked to {tgt.PrintName}");
+                LogAction($"Create reparse point for {sourcePathForDisplay(fromDir.FullName)}\r\n   at {destPath}\r\n   linked to {tgt.PrintName}");
                 File.CreateSymbolicLink(destPath, tgt.PrintName.StartsWith(@"\??\Volume") ? (@"\\?\" + tgt.PrintName.Substring(4)) : tgt.PrintName, SymbolicLinkTarget.Directory);
 #warning What if it was a junction?...
                 toDir = new DirectoryInfo(destPath);
@@ -300,36 +414,10 @@ namespace HoboMirror
 
     }
 
-    class CopyTask
-    {
-        public string FromPath { get; private set; }
-        public string FromVolume { get; private set; }
-        public string ToPath { get; private set; }
-
-        public CopyTask(string copyFrom, string copyTo)
-        {
-            FromPath = copyFrom;
-            ToPath = copyTo;
-            var match = Regex.Match(FromPath, @"^\\\\\?\\Volume{[^}]+}\\");
-            if (match.Success)
-            {
-                FromVolume = match.Groups[0].Value;
-            }
-            else
-            {
-                match = Regex.Match(FromPath, @"^\w:\\");
-                if (match.Success)
-                    FromVolume = match.Groups[0].Value;
-                else
-                    throw new Exception();
-            }
-        }
-    }
-
     class FileSystemInfoMetadata
     {
         public DateTime CreationTimeUtc, LastWriteTimeUtc, LastAccessTimeUtc;
-        public System.IO.FileAttributes Attributes;
+        public IO.FileAttributes Attributes;
         public FileSecurity FileSecurity;
         public DirectorySecurity DirectorySecurity;
     }

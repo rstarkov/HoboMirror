@@ -65,7 +65,7 @@ namespace HoboMirror
             foreach (var vol in Volumes.Values)
             {
                 if (!Volume.IsVolume(vol.Path))
-                    throw new ArgumentException(String.Format("{0} is not a valid volume.", vol.Path));
+                    throw new ArgumentException(String.Format("{0} is not a valid volume.", vol.Path), nameof(paths));
                 vol.UniquePath = Volume.GetUniqueVolumeNameForPath(vol.Path) ?? vol.Path;
                 vol.DisplayPath = GetDisplayNameForVolume(vol.UniquePath);
             }
