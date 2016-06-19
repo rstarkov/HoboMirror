@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Security.AccessControl;
 using System.Text.RegularExpressions;
 using Alphaleonis.Win32.Filesystem;
 using RT.Util.Consoles;
@@ -17,6 +18,9 @@ namespace HoboMirror
 
         static void Main(string[] args)
         {
+            LogAction("===============");
+            LogChange("===============", null);
+            LogError("===============");
             var volumes = Tasks.GroupBy(t => t.FromVolume).Select(g => g.Key).ToArray();
             using (var vsc = new VolumeShadowCopy(volumes))
                 foreach (var task in Tasks)
@@ -26,22 +30,38 @@ namespace HoboMirror
                         CreateDirectory(task.ToPath);
                     Mirror(new DirectoryInfo(fromPath), new DirectoryInfo(task.ToPath), str => str.Replace(vsc.Volumes[task.FromVolume].SnapshotPath, task.FromVolume).Replace(@"\\", @"\"));
                 }
+            LogChange("DIRECTORIES WITH AT LEAST ONE CHANGE: ", null);
+            foreach (var chg in Changes.OrderBy(path => path.Count(ch => ch == '\\')).ThenBy(path => path))
+                LogChange(chg, null);
         }
 
         private static void LogAction(string text)
         {
             ConsoleUtil.WriteLine(text.Color(ConsoleColor.White));
+            File.AppendAllLines("log-actions.txt", new[] { text });
         }
 
-        private static void LogChange(string text)
+        private static void LogChange(string text, string path)
         {
             ConsoleUtil.WriteLine(text.Color(ConsoleColor.Yellow));
+            File.AppendAllLines("log-changes.txt", new[] { text });
+            if (path != null)
+                Changes.Add(Path.GetDirectoryName(path));
         }
 
         private static void LogError(string text)
         {
             ConsoleUtil.WriteLine(text.Color(ConsoleColor.Red));
+            File.AppendAllLines("log-errors.txt", new[] { text });
         }
+
+        private static void LogDebug(string text)
+        {
+            ConsoleUtil.WriteLine(text.Color(ConsoleColor.DarkGray));
+            File.AppendAllLines("log-debug.txt", new[] { text });
+        }
+
+        private static HashSet<string> Changes = new HashSet<string>();
 
         private static void DeleteFile(FileInfo file)
         {
@@ -77,6 +97,62 @@ namespace HoboMirror
             dir.Delete(recursive: false, ignoreReadOnly: true);
         }
 
+        private static FileSystemInfoMetadata GetMetadata(FileSystemInfo fsi)
+        {
+            try
+            {
+                var result = new FileSystemInfoMetadata();
+                if (fsi is FileInfo)
+                    result.FileSecurity = (fsi as FileInfo).GetAccessControl();
+                else
+                    result.DirectorySecurity = (fsi as DirectoryInfo).GetAccessControl();
+                result.Attributes = fsi.Attributes;
+                result.CreationTimeUtc = fsi.CreationTimeUtc;
+                result.LastWriteTimeUtc = fsi.LastWriteTimeUtc;
+                result.LastAccessTimeUtc = fsi.LastAccessTimeUtc;
+#warning TODO: if the source is a reparse point, this probably copies timestamps from the linked file instead. If source points to non-existent file, this will probably fail
+                return result;
+            }
+            catch (UnauthorizedAccessException)
+            {
+                LogError($"Unable to get {(fsi is FileInfo ? "file" : "directory")} metadata (unauthorized access): {fsi.FullName}");
+                return null;
+            }
+        }
+
+        private static void SetMetadata(FileSystemInfo fsi, FileSystemInfoMetadata data)
+        {
+            if (data == null)
+            {
+                LogError($"Unable to set {(fsi is FileInfo ? "file" : "directory")} metadata (source metadata not available): {fsi.FullName}");
+                return;
+            }
+            try
+            {
+                try
+                {
+                    if (fsi is FileInfo)
+                        (fsi as FileInfo).SetAccessControl(data.FileSecurity);
+                    else
+                        (fsi as DirectoryInfo).SetAccessControl(data.DirectorySecurity);
+                }
+                catch (System.IO.IOException)
+                {
+                    LogError($"Unable to set {(fsi is FileInfo ? "file" : "directory")} security parameters: {fsi.FullName}");
+#warning TODO: why does this fail on many files?
+                }
+                fsi.Attributes = data.Attributes;
+                if (fsi is FileInfo)
+                    File.SetTimestampsUtc(fsi.FullName, data.CreationTimeUtc, data.LastAccessTimeUtc, data.LastWriteTimeUtc, true, PathFormat.FullPath);
+                else
+                    Directory.SetTimestampsUtc(fsi.FullName, data.CreationTimeUtc, data.LastAccessTimeUtc, data.LastWriteTimeUtc, true, PathFormat.FullPath);
+            }
+            catch (UnauthorizedAccessException)
+            {
+                LogError($"Unable to set {(fsi is FileInfo ? "file" : "directory")} metadata (unauthorized access): {fsi.FullName}");
+            }
+        }
+
         private static void Mirror(DirectoryInfo from, DirectoryInfo to, Func<string, string> sourcePathForDisplay)
         {
             Console.Title = sourcePathForDisplay(from.FullName);
@@ -100,14 +176,14 @@ namespace HoboMirror
             // Delete mirrored files missing in source
             foreach (var toFile in toFiles.Values.Where(toFile => !fromFiles.ContainsKey(toFile.Name)))
             {
-                LogChange($"Found deleted file: {sourcePathForDisplay(Path.Combine(from.FullName, toFile.Name))}");
+                LogChange("Found deleted file: ", sourcePathForDisplay(Path.Combine(from.FullName, toFile.Name)));
                 DeleteFile(toFile);
             }
 
             // Delete mirrored directories missing in source
             foreach (var toDir in toDirs.Values.Where(toDir => !fromDirs.ContainsKey(toDir.Name)))
             {
-                LogChange($"Found deleted directory: {sourcePathForDisplay(Path.Combine(from.FullName, toDir.Name))}");
+                LogChange("Found deleted directory: ", sourcePathForDisplay(Path.Combine(from.FullName, toDir.Name)));
                 DeleteDirectory(toDir);
             }
 
@@ -124,11 +200,16 @@ namespace HoboMirror
                     {
 #warning TODO: if it was already a reparse point with a different target, this check will miss it, because changing the target does not change last write time
                         if (fromFile.IsReparsePoint() == toFile.IsReparsePoint())
-                            LogChange($"Found modified file: {sourcePathForDisplay(fromFile.FullName)}");
+                        {
+                            LogChange("Found modified file: ", sourcePathForDisplay(fromFile.FullName));
+                            LogDebug($"Modified file: {sourcePathForDisplay(fromFile.FullName)}");
+                            LogDebug($"    Last write time: source={fromFile.LastWriteTimeUtc.ToIsoStringRoundtrip()}, target={toFile.LastWriteTimeUtc.ToIsoStringRoundtrip()}");
+                            LogDebug($"    Length: source={fromFile.Length:#,0}, target={toFile.Length:#,0}");
+                        }
                         else if (fromFile.IsReparsePoint())
-                            LogChange($"Found file reparse point which used to be a file: {sourcePathForDisplay(fromFile.FullName)}");
+                            LogChange("Found file reparse point which used to be a file: ", sourcePathForDisplay(fromFile.FullName));
                         else
-                            LogChange($"Found file which used to be a file reparse point: {sourcePathForDisplay(fromFile.FullName)}");
+                            LogChange("Found file which used to be a file reparse point: ", sourcePathForDisplay(fromFile.FullName));
                         DeleteFile(toFile);
                         notNew = true;
                         toFile = null;
@@ -139,23 +220,15 @@ namespace HoboMirror
                 if (toFile == null)
                 {
                     if (!notNew)
-                        LogChange($"Found new file: \"{sourcePathForDisplay(fromFile.FullName)}");
+                        LogChange("Found new file: ", sourcePathForDisplay(fromFile.FullName));
                     var destPath = Path.Combine(to.FullName, fromFile.Name);
-                    Console.WriteLine($"Mirror file: \"{sourcePathForDisplay(fromFile.FullName)}\"\r\n   to \"{destPath}\"");
+                    LogAction($"Copy file: {destPath}\r\n   from: {sourcePathForDisplay(fromFile.FullName)}");
                     fromFile.CopyTo(destPath, CopyOptions.CopySymbolicLink, CopyProgress, null);
                     toFile = new FileInfo(destPath);
                 }
 
                 // Update attributes
-                try { toFile.SetAccessControl(fromFile.GetAccessControl()); }
-                catch
-                {
-#warning TODO: figure out what's happening here.
-                    LogError($"Could not SetAccessControl on {toFile.FullName}");
-                }
-                toFile.Attributes = fromFile.Attributes;
-                File.SetTimestampsUtc(toFile.FullName, fromFile.CreationTimeUtc, fromFile.LastAccessTimeUtc, fromFile.LastWriteTimeUtc, true, PathFormat.FullPath);
-#warning TODO: if the source is a reparse point, this probably copies timestamps from the linked file instead. If source points to non-existent file, this will probably fail
+                SetMetadata(toFile, GetMetadata(fromFile));
             }
 
             // Process source directories that are reparse points
@@ -191,7 +264,7 @@ namespace HoboMirror
                 // If target dir exists and is a reparse point, delete it
                 if (toDir != null && toDir.IsReparsePoint())
                 {
-                    LogChange($"Found directory which used to be a reparse point: {sourcePathForDisplay(fromDir.FullName)}");
+                    LogChange("Found directory which used to be a reparse point: ", sourcePathForDisplay(fromDir.FullName));
                     DeleteDirectory(toDir);
                     toDir = null;
                     notNew = true;
@@ -201,7 +274,7 @@ namespace HoboMirror
                 if (toDir == null)
                 {
                     if (!notNew)
-                        LogChange($"Found new directory: {sourcePathForDisplay(fromDir.FullName)}");
+                        LogChange("Found new directory: ", sourcePathForDisplay(fromDir.FullName));
                     toDir = new DirectoryInfo(Path.Combine(to.FullName, fromDir.Name));
                     CreateDirectory(toDir.FullName);
                 }
@@ -210,24 +283,7 @@ namespace HoboMirror
                 Mirror(fromDir, toDir, sourcePathForDisplay);
 
                 // Update attributes
-                var fromAccess = fromDir.GetAccessControl();
-                var fromAttrs = fromDir.Attributes; // also loads and caches file times
-                try
-                {
-                    try { toDir.SetAccessControl(fromAccess); }
-                catch
-                {
-#warning TODO: figure out what's happening here.
-                        LogError($"Could not SetAccessControl on {toDir.FullName}");
-                }
-                    toDir.Attributes = fromAttrs;
-                Directory.SetTimestampsUtc(toDir.FullName, fromDir.CreationTimeUtc, fromDir.LastAccessTimeUtc, fromDir.LastWriteTimeUtc, PathFormat.FullPath);
-            }
-                catch (UnauthorizedAccessException)
-                {
-                    LogError($"Unable to set directory attributes (unauthorized access): {toDir.FullName}");
-                    return;
-                }
+                SetMetadata(toDir, GetMetadata(fromDir));
             }
         }
 
@@ -268,5 +324,13 @@ namespace HoboMirror
                     throw new Exception();
             }
         }
+    }
+
+    class FileSystemInfoMetadata
+    {
+        public DateTime CreationTimeUtc, LastWriteTimeUtc, LastAccessTimeUtc;
+        public System.IO.FileAttributes Attributes;
+        public FileSecurity FileSecurity;
+        public DirectorySecurity DirectorySecurity;
     }
 }
