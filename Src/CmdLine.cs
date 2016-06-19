@@ -22,18 +22,22 @@ namespace HoboMirror
         [DocumentationRhoML("{h}Specifies log file directory.{}\nHoboMirror creates several log files at this path. No log files are created if this option is omitted. Specify the empty string ({h}\"\"{}) to log to the directory containing HoboMirror.exe.")]
         public string LogPath = null;
 
+        [Option("-i", "--ignore")]
+        [DocumentationRhoML("{h}Specifies one or more source paths to ignore.{}\nThe specified paths will not be mirrored, and will be deleted from the target if already present.")]
+        public string[] IgnorePath = null;
+
         public ConsoleColoredString Validate()
         {
             if (FromPath.Length != ToPath.Length)
                 return CommandLineParser.Colorize(RhoML.Parse("The number of {option}--from{} arguments must match the number of {option}--to{} arguments."));
             for (int i = 0; i < FromPath.Length; i++)
             {
-                FromPath[i] = Path.GetFullPath(FromPath[i]);
-                if (!FromPath[i].EndsWith("\\"))
-                    FromPath[i] += "\\";
-                ToPath[i] = Path.GetFullPath(ToPath[i]);
-                if (!ToPath[i].EndsWith("\\"))
-                    ToPath[i] += "\\";
+                FromPath[i] = Path.GetFullPath(FromPath[i]).WithSlash();
+                ToPath[i] = Path.GetFullPath(ToPath[i]).WithSlash();
+            }
+            for (int i = 0; i < IgnorePath.Length; i++)
+            {
+                IgnorePath[i] = Path.GetFullPath(IgnorePath[i]).WithSlash();
             }
             foreach (var path in FromPath.Concat(ToPath))
                 if (!Directory.Exists(path))

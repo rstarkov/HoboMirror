@@ -84,6 +84,8 @@ namespace HoboMirror
                 LogAll($"Started at {DateTime.Now}");
                 foreach (var task in tasks)
                     LogAll($"    Mirror task: from “{task.FromPath}” to “{task.ToPath}”");
+                foreach (var ignore in Args.IgnorePath)
+                    LogAll($"    Ignore path: “{ignore}”");
 
                 // Refuse to mirror without a guard file
                 foreach (var task in tasks)
@@ -265,9 +267,9 @@ namespace HoboMirror
             }
         }
 
-        private static void Mirror(DirectoryInfo from, DirectoryInfo to, Func<string, string> sourcePathForDisplay)
+        private static void Mirror(DirectoryInfo from, DirectoryInfo to, Func<string, string> getOriginalFromPath)
         {
-            Console.Title = sourcePathForDisplay(from.FullName);
+            Console.Title = getOriginalFromPath(from.FullName);
 
             // Enumerate files and directories
             Dictionary<string, FileInfo> fromFiles, toFiles;
@@ -285,6 +287,15 @@ namespace HoboMirror
                 return;
             }
 
+            // Ignore paths as requested
+            foreach (var fromDir in fromDirs.Values.ToList())
+                foreach (var ignore in Args.IgnorePath)
+                    if (getOriginalFromPath(fromDir.FullName).WithSlash().EqualsNoCase(ignore))
+                    {
+                        LogAction($"Ignoring directory: {fromDir.FullName}");
+                        fromDirs.Remove(fromDir.Name);
+                        break;
+                    }
             // Completely ignore the guard file (in any directory)
             fromFiles.RemoveAllByValue(f => f.Name == "__HoboMirrorTarget__.txt");
             toFiles.RemoveAllByValue(f => f.Name == "__HoboMirrorTarget__.txt");
@@ -292,14 +303,14 @@ namespace HoboMirror
             // Delete mirrored files missing in source
             foreach (var toFile in toFiles.Values.Where(toFile => !fromFiles.ContainsKey(toFile.Name)))
             {
-                LogChange("Found deleted file: ", sourcePathForDisplay(Path.Combine(from.FullName, toFile.Name)));
+                LogChange("Found deleted file: ", getOriginalFromPath(Path.Combine(from.FullName, toFile.Name)));
                 DeleteFile(toFile);
             }
 
             // Delete mirrored directories missing in source
             foreach (var toDir in toDirs.Values.Where(toDir => !fromDirs.ContainsKey(toDir.Name)))
             {
-                LogChange("Found deleted directory: ", sourcePathForDisplay(Path.Combine(from.FullName, toDir.Name)));
+                LogChange("Found deleted directory: ", getOriginalFromPath(Path.Combine(from.FullName, toDir.Name)));
                 DeleteDirectory(toDir);
             }
 
@@ -317,15 +328,15 @@ namespace HoboMirror
 #warning TODO: if it was already a reparse point with a different target, this check will miss it, because changing the target does not change last write time
                         if (fromFile.IsReparsePoint() == toFile.IsReparsePoint())
                         {
-                            LogChange("Found modified file: ", sourcePathForDisplay(fromFile.FullName));
-                            LogDebug($"Modified file: {sourcePathForDisplay(fromFile.FullName)}");
+                            LogChange("Found modified file: ", getOriginalFromPath(fromFile.FullName));
+                            LogDebug($"Modified file: {getOriginalFromPath(fromFile.FullName)}");
                             LogDebug($"    Last write time: source={fromFile.LastWriteTimeUtc.ToIsoStringRoundtrip()}, target={toFile.LastWriteTimeUtc.ToIsoStringRoundtrip()}");
                             LogDebug($"    Length: source={fromFile.Length:#,0}, target={toFile.Length:#,0}");
                         }
                         else if (fromFile.IsReparsePoint())
-                            LogChange("Found file reparse point which used to be a file: ", sourcePathForDisplay(fromFile.FullName));
+                            LogChange("Found file reparse point which used to be a file: ", getOriginalFromPath(fromFile.FullName));
                         else
-                            LogChange("Found file which used to be a file reparse point: ", sourcePathForDisplay(fromFile.FullName));
+                            LogChange("Found file which used to be a file reparse point: ", getOriginalFromPath(fromFile.FullName));
                         DeleteFile(toFile);
                         notNew = true;
                         toFile = null;
@@ -336,9 +347,9 @@ namespace HoboMirror
                 if (toFile == null)
                 {
                     if (!notNew)
-                        LogChange("Found new file: ", sourcePathForDisplay(fromFile.FullName));
+                        LogChange("Found new file: ", getOriginalFromPath(fromFile.FullName));
                     var destPath = Path.Combine(to.FullName, fromFile.Name);
-                    LogAction($"Copy file: {destPath}\r\n   from: {sourcePathForDisplay(fromFile.FullName)}");
+                    LogAction($"Copy file: {destPath}\r\n   from: {getOriginalFromPath(fromFile.FullName)}");
                     fromFile.CopyTo(destPath, CopyOptions.CopySymbolicLink, CopyProgress, null);
                     toFile = new FileInfo(destPath);
                 }
@@ -358,7 +369,7 @@ namespace HoboMirror
 #warning TODO: detect change properly and improve logging
                 var destPath = Path.Combine(to.FullName, fromDir.Name);
                 var tgt = File.GetLinkTargetInfo(fromDir.FullName);
-                LogAction($"Create reparse point for {sourcePathForDisplay(fromDir.FullName)}\r\n   at {destPath}\r\n   linked to {tgt.PrintName}");
+                LogAction($"Create reparse point for {getOriginalFromPath(fromDir.FullName)}\r\n   at {destPath}\r\n   linked to {tgt.PrintName}");
                 File.CreateSymbolicLink(destPath, tgt.PrintName.StartsWith(@"\??\Volume") ? (@"\\?\" + tgt.PrintName.Substring(4)) : tgt.PrintName, SymbolicLinkTarget.Directory);
 #warning What if it was a junction?...
                 toDir = new DirectoryInfo(destPath);
@@ -378,7 +389,7 @@ namespace HoboMirror
                 // If target dir exists and is a reparse point, delete it
                 if (toDir != null && toDir.IsReparsePoint())
                 {
-                    LogChange("Found directory which used to be a reparse point: ", sourcePathForDisplay(fromDir.FullName));
+                    LogChange("Found directory which used to be a reparse point: ", getOriginalFromPath(fromDir.FullName));
                     DeleteDirectory(toDir);
                     toDir = null;
                     notNew = true;
@@ -388,13 +399,13 @@ namespace HoboMirror
                 if (toDir == null)
                 {
                     if (!notNew)
-                        LogChange("Found new directory: ", sourcePathForDisplay(fromDir.FullName));
+                        LogChange("Found new directory: ", getOriginalFromPath(fromDir.FullName));
                     toDir = new DirectoryInfo(Path.Combine(to.FullName, fromDir.Name));
                     CreateDirectory(toDir.FullName);
                 }
 
                 // Recurse!
-                Mirror(fromDir, toDir, sourcePathForDisplay);
+                Mirror(fromDir, toDir, getOriginalFromPath);
 
                 // Update attributes
                 SetMetadata(toDir, GetMetadata(fromDir));

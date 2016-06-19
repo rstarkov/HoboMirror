@@ -8,5 +8,10 @@ namespace HoboMirror
         {
             return fsi.Attributes.HasFlag(System.IO.FileAttributes.ReparsePoint);
         }
+
+        public static string WithSlash(this string path)
+        {
+            return path.EndsWith("\\") ? path : (path + "\\");
+        }
     }
 }
