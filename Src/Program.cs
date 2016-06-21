@@ -9,6 +9,7 @@ using RT.Util;
 using RT.Util.CommandLine;
 using RT.Util.Consoles;
 using RT.Util.ExtensionMethods;
+using RT.Util.Serialization;
 using IO = System.IO;
 
 // sort by how many times a folder has been seen to change before, so that unusual changes are at the top
@@ -18,6 +19,7 @@ namespace HoboMirror
     class Program
     {
         static CmdLine Args;
+        static Settings Settings;
 
         static IO.StreamWriter ActionLog, ChangeLog, ErrorLog, DebugLog;
 
@@ -52,6 +54,19 @@ namespace HoboMirror
             Args = CommandLineParser.ParseOrWriteUsageToConsole<CmdLine>(args);
             if (Args == null)
                 return -1;
+
+            // Load settings file
+            if (Args.SettingsPath != null)
+            {
+                if (File.Exists(Args.SettingsPath))
+                    Settings = ClassifyJson.DeserializeFile<Settings>(Args.SettingsPath);
+                else
+                {
+                    Settings = new Settings();
+                    ClassifyJson.SerializeToFile(Settings, Args.SettingsPath);
+                }
+                Settings.GroupDirectoriesForChangeReport = Settings.GroupDirectoriesForChangeReport.Select(dir => dir.WithSlash()).ToHashSet();
+            }
 
             // Initialise log files
             var startTime = DateTime.UtcNow;
@@ -111,10 +126,28 @@ namespace HoboMirror
                         Mirror(new DirectoryInfo(fromPath), new DirectoryInfo(task.ToPath), str => str.Replace(vsc.Volumes[task.FromVolume].SnapshotPath, task.FromVolume).Replace(@"\\", @"\"));
                     }
 
+                // Save settings file
+                if (Args.SettingsPath != null)
+                    ClassifyJson.SerializeToFile(Settings, Args.SettingsPath);
+
                 // List changed directories
                 LogChange("DIRECTORIES WITH AT LEAST ONE CHANGE: ", null);
-                foreach (var chg in Changes.OrderBy(path => path.Count(ch => ch == '\\')).ThenBy(path => path))
-                    LogChange(chg, null);
+                if (Settings == null)
+                {
+                    foreach (var chg in Changes.Order())
+                        LogChange("  " + chg, null);
+                }
+                else
+                {
+                    LogChange("(sorted from rarely changing to frequently changing)", null);
+                    var changes =
+                        from dir in Changes
+                        group dir by dir.AllParentPaths().FirstOrDefault(p => Settings.GroupDirectoriesForChangeReport.Contains(p)) ?? dir into grp
+                        let changeCounts = grp.Select(p => Settings.DirectoryChangeCount[p])
+                        select new { path = grp.Key, changeFreq = changeCounts.Sum(ch => ch.TimesChanged) / (double) changeCounts.Sum(ch => ch.TimesScanned) };
+                    foreach (var chg in changes.OrderBy(ch => ch.changeFreq))
+                        LogChange($"  {chg.path} — {chg.changeFreq:0.0%}", null);
+                }
 
                 return 0;
             }
@@ -142,7 +175,7 @@ namespace HoboMirror
         private static void LogChange(string text, string path)
         {
             if (path != null)
-                Changes.Add(Path.GetDirectoryName(path));
+                Changes.Add(Path.GetDirectoryName(path).WithSlash());
             ConsoleUtil.WriteParagraphs((text + path).Color(ConsoleColor.Yellow));
             ChangeLog?.WriteLine(text + path);
             ChangeLog?.Flush();
@@ -270,6 +303,7 @@ namespace HoboMirror
         private static void Mirror(DirectoryInfo from, DirectoryInfo to, Func<string, string> getOriginalFromPath)
         {
             Console.Title = getOriginalFromPath(from.FullName);
+            bool anyChanges = false;
 
             // Enumerate files and directories
             Dictionary<string, FileInfo> fromFiles, toFiles;
@@ -304,6 +338,7 @@ namespace HoboMirror
             foreach (var toFile in toFiles.Values.Where(toFile => !fromFiles.ContainsKey(toFile.Name)))
             {
                 LogChange("Found deleted file: ", getOriginalFromPath(Path.Combine(from.FullName, toFile.Name)));
+                anyChanges = true;
                 DeleteFile(toFile);
             }
 
@@ -311,6 +346,7 @@ namespace HoboMirror
             foreach (var toDir in toDirs.Values.Where(toDir => !fromDirs.ContainsKey(toDir.Name)))
             {
                 LogChange("Found deleted directory: ", getOriginalFromPath(Path.Combine(from.FullName, toDir.Name)));
+                anyChanges = true;
                 DeleteDirectory(toDir);
             }
 
@@ -337,6 +373,7 @@ namespace HoboMirror
                             LogChange("Found file reparse point which used to be a file: ", getOriginalFromPath(fromFile.FullName));
                         else
                             LogChange("Found file which used to be a file reparse point: ", getOriginalFromPath(fromFile.FullName));
+                        anyChanges = true;
                         DeleteFile(toFile);
                         notNew = true;
                         toFile = null;
@@ -348,6 +385,7 @@ namespace HoboMirror
                 {
                     if (!notNew)
                         LogChange("Found new file: ", getOriginalFromPath(fromFile.FullName));
+                    anyChanges = true;
                     var destPath = Path.Combine(to.FullName, fromFile.Name);
                     LogAction($"Copy file: {destPath}\r\n   from: {getOriginalFromPath(fromFile.FullName)}");
                     fromFile.CopyTo(destPath, CopyOptions.CopySymbolicLink, CopyProgress, null);
@@ -390,6 +428,7 @@ namespace HoboMirror
                 if (toDir != null && toDir.IsReparsePoint())
                 {
                     LogChange("Found directory which used to be a reparse point: ", getOriginalFromPath(fromDir.FullName));
+                    anyChanges = true;
                     DeleteDirectory(toDir);
                     toDir = null;
                     notNew = true;
@@ -400,6 +439,7 @@ namespace HoboMirror
                 {
                     if (!notNew)
                         LogChange("Found new directory: ", getOriginalFromPath(fromDir.FullName));
+                    anyChanges = true;
                     toDir = new DirectoryInfo(Path.Combine(to.FullName, fromDir.Name));
                     CreateDirectory(toDir.FullName);
                 }
@@ -409,6 +449,15 @@ namespace HoboMirror
 
                 // Update attributes
                 SetMetadata(toDir, GetMetadata(fromDir));
+            }
+
+            // Update statistics
+            if (Settings != null)
+            {
+                var path = getOriginalFromPath(from.FullName).WithSlash();
+                Settings.DirectoryChangeCount[path].TimesScanned++;
+                if (anyChanges)
+                    Settings.DirectoryChangeCount[path].TimesChanged++;
             }
         }
 

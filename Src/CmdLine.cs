@@ -26,6 +26,10 @@ namespace HoboMirror
         [DocumentationRhoML("{h}Specifies one or more source paths to ignore.{}\nThe specified paths will not be mirrored, and will be deleted from the target if already present.")]
         public string[] IgnorePath = null;
 
+        [Option("-s", "--settings")]
+        [DocumentationRhoML("{h}Specifies a file containing additional settings.{}\nIf specified, additional features become available, for example change statistics. A blank file is created if it doesn't exist.")]
+        public string SettingsPath = null;
+
         public ConsoleColoredString Validate()
         {
             if (FromPath.Length != ToPath.Length)
@@ -42,6 +46,8 @@ namespace HoboMirror
             foreach (var path in FromPath.Concat(ToPath))
                 if (!Directory.Exists(path))
                     return CommandLineParser.Colorize(RhoML.Parse($"Directory not found: {{h}}{path}{{}}."));
+            if (SettingsPath != null && !Directory.Exists(Path.GetDirectoryName(SettingsPath)))
+                return CommandLineParser.Colorize(RhoML.Parse($"The {{option}}--settings{{}} file does not exist and will not be created because this directory does not exist: {{h}}{Path.GetDirectoryName(SettingsPath)}{{}}."));
             return null;
         }
 
