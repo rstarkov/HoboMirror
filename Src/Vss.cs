@@ -26,7 +26,9 @@ namespace HoboMirror
         {
             try
             {
+                Program.LogAction("Initializing VSS snapshots...");
                 initialize(volumes);
+                Program.LogAction("  done.");
             }
             catch
             {
@@ -46,11 +48,11 @@ namespace HoboMirror
             {
                 if (_needsCleanup)
                 {
-                    Console.WriteLine("Deleting the snapshot / cleaning up...");
+                    Program.LogAction("Deleting VSS snapshots and cleaning up...");
                     bkpComponents.BackupComplete();
                     EnsureNoWritersFailed(bkpComponents, writers);
                     _needsCleanup = false;
-                    Console.WriteLine("   done.");
+                    Program.LogAction("   done.");
                 }
                 bkpComponents.Dispose();
                 bkpComponents = null;
@@ -61,7 +63,7 @@ namespace HoboMirror
         {
             var vss = VssUtils.LoadImplementation();
 
-            Volumes = new ReadOnlyDictionary<string,VolumeShadowCopyVol>(paths.ToDictionary(k => k, k => new VolumeShadowCopyVol { Path = k }));
+            Volumes = new ReadOnlyDictionary<string, VolumeShadowCopyVol>(paths.ToDictionary(k => k, k => new VolumeShadowCopyVol { Path = k }));
             foreach (var vol in Volumes.Values)
             {
                 if (!Volume.IsVolume(vol.Path))
@@ -80,7 +82,7 @@ namespace HoboMirror
                 bkpComponents.SetContext(context);
             bkpComponents.SetBackupState(true, true, VssBackupType.Full, false);
 
-            Console.WriteLine("Gathering writer metadata...");
+            Program.LogDebug("Gathering writer metadata...");
             using (var result = bkpComponents.BeginGatherWriterMetadata(null, null))
                 result.AsyncWaitHandle.WaitOne();
 
@@ -91,25 +93,25 @@ namespace HoboMirror
             var snapshotSetId = bkpComponents.StartSnapshotSet();
             foreach (var vol in Volumes.Values)
             {
-                Console.WriteLine("Adding volume {0} [aka {1}, unique {2}]...", vol.Path, vol.DisplayPath, vol.UniquePath);
+                Program.LogDebug($"Adding volume {vol.Path} [aka {vol.DisplayPath}, unique {vol.UniquePath}]...");
                 bkpComponents.AddToSnapshotSet(vol.UniquePath);
             }
 
             bkpComponents.PrepareForBackup();
             EnsureNoWritersFailed(bkpComponents, writers);
-            Console.WriteLine("Creating the shadow copy...");
+            Program.LogDebug("Creating the shadow copy...");
             bkpComponents.DoSnapshotSet();
             _needsCleanup = true;
 
             EnsureNoWritersFailed(bkpComponents, writers);
-            Console.WriteLine("   done.");
+            Program.LogDebug("   done.");
 
             var snapshots = bkpComponents.QuerySnapshots();
             foreach (var vol in Volumes.Values)
             {
                 var snap = snapshots.Where(s => string.Equals(s.OriginalVolumeName, vol.UniquePath, StringComparison.OrdinalIgnoreCase)).MaxElement(s => s.CreationTimestamp);
                 vol.SnapshotPath = snap.SnapshotDeviceObject;
-                Console.WriteLine("Volume {0} [aka {1}, unique {2}] snapshot UNC: {3}", vol.Path, vol.DisplayPath, vol.UniquePath, vol.SnapshotPath);
+                Program.LogDebug($"Volume {vol.Path} [aka {vol.DisplayPath}, unique {vol.UniquePath}] snapshot UNC: {vol.SnapshotPath}");
             }
         }
 
@@ -138,11 +140,11 @@ namespace HoboMirror
                         continue;
                 }
 
-                Console.WriteLine("Selected writer '{0}' is in failed state!", writer.Name);
-                Console.WriteLine("Status: " + writer.State);
-                Console.WriteLine("Writer Failure Code: " + writer.Failure);
-                Console.WriteLine("Writer ID: " + writer.ClassId);
-                Console.WriteLine("Instance ID: " + writer.InstanceId);
+                Program.LogError($"Selected writer '{writer.Name}' is in failed state!");
+                Program.LogError("Status: " + writer.State);
+                Program.LogError("Writer Failure Code: " + writer.Failure);
+                Program.LogError("Writer ID: " + writer.ClassId);
+                Program.LogError("Instance ID: " + writer.InstanceId);
                 throw new Exception();
             }
         }
@@ -158,7 +160,7 @@ namespace HoboMirror
 
         private static void DiscoverNonShadowedExcludedComponents(IEnumerable<string> shadowSourceVolumes, List<VssWriterDescriptor> writers)
         {
-            Console.WriteLine("Discover components that reside outside the shadow set...");
+            Program.LogDebug("Discover components that reside outside the shadow set...");
 
             // Discover components that should be excluded from the shadow set 
             // This means components that have at least one File Descriptor requiring 
@@ -198,12 +200,11 @@ namespace HoboMirror
 
                             if (localVolume != null)
                             {
-                                Console.WriteLine("- Component '{0}' from writer '{1}' is excluded from backup (it requires {2} in the shadow set)",
-                                   component.FullPath, writer.WriterMetadata.WriterName, localVolume);
+                                Program.LogDebug($"- Component '{component.FullPath}' from writer '{writer.WriterMetadata.WriterName}' is excluded from backup (it requires {localVolume} in the shadow set)");
                             }
                             else
                             {
-                                Console.WriteLine("- Component '{0}' from writer '{1}' is excluded from backup.", component.FullPath, writer.WriterMetadata.WriterName);
+                                Program.LogDebug($"- Component '{component.FullPath}' from writer '{writer.WriterMetadata.WriterName}' is excluded from backup.");
                             }
                             component.IsExcluded = true;
                             break;
@@ -215,7 +216,7 @@ namespace HoboMirror
 
         private static void DiscoverAllExcludedComponents(List<VssWriterDescriptor> writers)
         {
-            Console.WriteLine("Discover all excluded components ...");
+            Program.LogDebug("Discover all excluded components ...");
 
             // Discover components that should be excluded from the shadow set 
             // This means components that have at least one File Descriptor requiring 
@@ -230,7 +231,7 @@ namespace HoboMirror
                     {
                         if (component.IsAncestorOf(descendent) && descendent.IsExcluded)
                         {
-                            Console.WriteLine("- Component '{0}' from writer '{1} is excluded from backup (it has an excluded descendent: '{2}').", component.FullPath, writer.WriterMetadata.WriterName, descendent.WriterName);
+                            Program.LogDebug($"- Component '{component.FullPath}' from writer '{writer.WriterMetadata.WriterName} is excluded from backup (it has an excluded descendent: '{descendent.WriterName}').");
                             component.IsExcluded = true;
                             break;
                         }
@@ -241,7 +242,7 @@ namespace HoboMirror
 
         private static void DiscoverExcludedWriters(List<VssWriterDescriptor> writers)
         {
-            Console.WriteLine("Discover excluded writers...");
+            Program.LogDebug("Discover excluded writers...");
 
             // Enumerate writers
             foreach (VssWriterDescriptor writer in writers.Where(w => w.IsExcluded == false))
@@ -255,7 +256,7 @@ namespace HoboMirror
                 // No included components were found
                 if (writer.IsExcluded)
                 {
-                    Console.WriteLine("- The writer '{0} is now entierly excluded from the backup (it does not contain any components that can be potentially included in the backup).", writer.WriterMetadata.WriterName);
+                    Program.LogDebug($"- The writer '{writer.WriterMetadata.WriterName} is now entierly excluded from the backup (it does not contain any components that can be potentially included in the backup).");
                     continue;
                 }
 
@@ -265,8 +266,7 @@ namespace HoboMirror
                 {
                     if (component.IsTopLevel && !component.IsSelectable && component.IsExcluded)
                     {
-                        Console.WriteLine("- The writer '{0}' is now entierly excluded from the backup (the top-level non-selectable component '{1}' is an excluded component.",
-                           writer.WriterMetadata.WriterName, component.FullPath);
+                        Program.LogDebug($"- The writer '{writer.WriterMetadata.WriterName}' is now entierly excluded from the backup (the top-level non-selectable component '{component.FullPath}' is an excluded component.");
                         writer.IsExcluded = true;
                         break;
                     }
@@ -276,7 +276,7 @@ namespace HoboMirror
 
         private static void DiscoverExplicitelyIncludedComponents(List<VssWriterDescriptor> writers)
         {
-            Console.WriteLine("Discover explicitly included components...");
+            Program.LogDebug("Discover explicitly included components...");
 
             // Enumerate all writers
             foreach (var writer in writers.Where(w => w.IsExcluded == false))
@@ -292,16 +292,16 @@ namespace HoboMirror
 
         private static void SelectExplicitelyIncludedComponents(IVssBackupComponents bkpComponents, List<VssWriterDescriptor> writers)
         {
-            Console.WriteLine("Select explicitly included components ...");
+            Program.LogDebug("Select explicitly included components ...");
 
             foreach (VssWriterDescriptor writer in writers.Where(w => !w.IsExcluded))
             {
-                Console.WriteLine(" * Writer '{0}':", writer.WriterMetadata.WriterName);
+                Program.LogDebug($" * Writer '{writer.WriterMetadata.WriterName}':");
 
                 // Compute the roots of included components
                 foreach (var component in writer.ComponentDescriptors.Where(c => c.IsExplicitlyIncluded))
                 {
-                    Console.WriteLine("    - Add component {0}", component.FullPath);
+                    Program.LogDebug($"    - Add component {component.FullPath}");
                     bkpComponents.AddComponent(writer.WriterMetadata.InstanceId, writer.WriterMetadata.WriterId, component.ComponentType, component.LogicalPath, component.ComponentName);
                 }
             }

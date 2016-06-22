@@ -131,7 +131,8 @@ namespace HoboMirror
                     ClassifyJson.SerializeToFile(Settings, Args.SettingsPath);
 
                 // List changed directories
-                LogChange("DIRECTORIES WITH AT LEAST ONE CHANGE: ", null);
+                LogChange("", null);
+                LogChange("DIRECTORIES WITH AT LEAST ONE CHANGE:", null);
                 if (Settings == null)
                 {
                     foreach (var chg in Changes.Order())
@@ -165,14 +166,14 @@ namespace HoboMirror
             }
         }
 
-        private static void LogAction(string text)
+        public static void LogAction(string text)
         {
             ConsoleUtil.WriteParagraphs(text.Color(ConsoleColor.White));
             ActionLog?.WriteLine(text);
             ActionLog?.Flush();
         }
 
-        private static void LogChange(string text, string path)
+        public static void LogChange(string text, string path)
         {
             if (path != null)
                 Changes.Add(Path.GetDirectoryName(path).WithSlash());
@@ -181,21 +182,21 @@ namespace HoboMirror
             ChangeLog?.Flush();
         }
 
-        private static void LogError(string text)
+        public static void LogError(string text)
         {
             ConsoleUtil.WriteParagraphs(text.Color(ConsoleColor.Red));
             ErrorLog?.WriteLine(text);
             ErrorLog?.Flush();
         }
 
-        private static void LogDebug(string text)
+        public static void LogDebug(string text)
         {
-            ConsoleUtil.WriteParagraphs(text.Color(ConsoleColor.DarkGray));
+            //ConsoleUtil.WriteParagraphs(text.Color(ConsoleColor.DarkGray));
             DebugLog?.WriteLine(text);
             DebugLog?.Flush();
         }
 
-        private static void LogAll(string text)
+        public static void LogAll(string text)
         {
             ConsoleUtil.WriteParagraphs(text.Color(ConsoleColor.Green));
             ActionLog?.WriteLine(text);
