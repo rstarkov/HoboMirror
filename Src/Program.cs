@@ -12,8 +12,6 @@ using RT.Util.ExtensionMethods;
 using RT.Util.Serialization;
 using IO = System.IO;
 
-// sort by how many times a folder has been seen to change before, so that unusual changes are at the top
-
 namespace HoboMirror
 {
     class Program
@@ -327,7 +325,7 @@ namespace HoboMirror
                 foreach (var ignore in Args.IgnorePath)
                     if (getOriginalFromPath(fromDir.FullName).WithSlash().EqualsNoCase(ignore))
                     {
-                        LogAction($"Ignoring directory: {fromDir.FullName}");
+                        LogAction($"Ignoring directory: {getOriginalFromPath(fromDir.FullName)}");
                         fromDirs.Remove(fromDir.Name);
                         break;
                     }
