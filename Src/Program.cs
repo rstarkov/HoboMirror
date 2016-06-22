@@ -411,10 +411,7 @@ namespace HoboMirror
 #warning What if it was a junction?...
                 toDir = new DirectoryInfo(destPath);
                 // Copy attributes
-                toDir.SetAccessControl(fromDir.GetAccessControl());
-                toDir.Attributes = fromDir.Attributes;
-                Directory.SetTimestampsUtc(destPath, fromDir.CreationTimeUtc, fromDir.LastAccessTimeUtc, fromDir.LastWriteTimeUtc, true, PathFormat.FullPath);
-#warning TODO: if the source is a reparse point, this probably copies timestamps from the linked file instead. If source points to non-existent file, this will probably fail
+                SetMetadata(toDir, GetMetadata(fromDir));
             }
 
             // Process source directories which are not reparse points
