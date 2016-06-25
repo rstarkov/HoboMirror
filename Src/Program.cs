@@ -291,6 +291,12 @@ namespace HoboMirror
                 LogError($"Unable to get {(fsi is FileInfo ? "file" : "directory")} metadata (unauthorized access): {fsi.FullName}");
                 return null;
             }
+            catch (IO.FileNotFoundException)
+            {
+                // Thrown if permissions are extremely restrictive for some reason
+                LogError($"Unable to get {(fsi is FileInfo ? "file" : "directory")} metadata (file not found): {fsi.FullName}");
+                return null;
+            }
         }
 
         private static void SetMetadata(FileSystemInfo fsi, FileSystemInfoMetadata data)

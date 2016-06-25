@@ -30,17 +30,17 @@ namespace HoboMirror
         {
             if (!Match.EndsWith("\\"))
                 Match = Match + "\\";
-            if (StartsWith && !Match.StartsWith("\\"))
+            if (!StartsWith && !Match.StartsWith("\\"))
                 Match = "\\" + Match;
         }
 
         public string GetMatch(string path)
         {
             if (StartsWith)
-                return path.StartsWith(Match) ? Match : null;
+                return path.StartsWith(Match, StringComparison.OrdinalIgnoreCase) ? Match : null;
             else
             {
-                int index = path.IndexOf(Match);
+                int index = path.IndexOf(Match, StringComparison.OrdinalIgnoreCase);
                 return index < 0 ? null : path.Substring(0, index + 1);
             }
         }
