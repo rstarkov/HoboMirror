@@ -54,6 +54,7 @@
     <Compile Include="Settings.cs" />
     <Compile Include="Utils.cs" />
     <Compile Include="Vss.cs" />
+    <Compile Include="WinAPI.cs" />
   </ItemGroup>
   <ItemGroup>
     <None Include="App.config" />

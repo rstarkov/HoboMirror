@@ -113,6 +113,18 @@ namespace HoboMirror
                     }
                 }
 
+                // Enable the necessary privilege to read and write everything
+                try
+                {
+                    WinAPI.ModifyPrivilege(PrivilegeName.SeBackupPrivilege, true);
+                    WinAPI.ModifyPrivilege(PrivilegeName.SeRestorePrivilege, true);
+                }
+                catch (Win32Exception e)
+                {
+                    LogError("Unable to obtain the necessary privileges. Some files and/or attributes will not be replicated.");
+                    LogError(e.Message);
+                }
+
                 // Perform the mirroring
                 var volumes = tasks.GroupBy(t => t.FromVolume).Select(g => g.Key).ToArray();
                 using (var vsc = new VolumeShadowCopy(volumes))
@@ -211,11 +223,25 @@ namespace HoboMirror
 
         private static void DeleteFile(FileInfo file)
         {
+            if (!file.Exists)
+            {
+                LogError($"File to be deleted does not exist: {file.FullName}");
+                return;
+            }
+
             if (file.IsReparsePoint())
                 LogAction($"Delete file reparse point: {file.FullName}");
             else
                 LogAction($"Delete file: {file.FullName}");
-            file.Delete(ignoreReadOnly: true);
+
+            try
+            {
+                file.Delete(ignoreReadOnly: true);
+            }
+            catch (UnauthorizedAccessException)
+            {
+                LogError($"Unable to delete {(file.IsReparsePoint() ? "file reparse point" : "file")} (unauthorized access): {file.FullName}");
+            }
         }
 
         private static void CreateDirectory(string fullName)
