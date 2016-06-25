@@ -14,17 +14,5 @@ namespace HoboMirror
         {
             return path.EndsWith("\\") ? path : (path + "\\");
         }
-
-        public static IEnumerable<string> AllParentPaths(this string path)
-        {
-            var root = Path.GetPathRoot(path);
-            while (true)
-            {
-                yield return path.WithSlash();
-                if (path == root)
-                    yield break;
-                path = Path.GetDirectoryName(path);
-            }
-        }
     }
 }

@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.ComponentModel;
 using System.Linq;
 using System.Reflection;
 using System.Security.AccessControl;
@@ -63,7 +64,6 @@ namespace HoboMirror
                     Settings = new Settings();
                     ClassifyJson.SerializeToFile(Settings, Args.SettingsPath);
                 }
-                Settings.GroupDirectoriesForChangeReport = Settings.GroupDirectoriesForChangeReport.Select(dir => dir.WithSlash()).ToHashSet();
             }
 
             // Initialise log files
@@ -153,7 +153,8 @@ namespace HoboMirror
                     LogChange("(sorted from rarely changing to frequently changing)", null);
                     var changes =
                         from dir in Changes
-                        group dir by dir.AllParentPaths().FirstOrDefault(p => Settings.GroupDirectoriesForChangeReport.Contains(p)) ?? dir into grp
+                        let match = Settings.GroupDirectoriesForChangeReport.Select(dg => dg.GetMatch(dir)).Where(m => m != null).MinElementOrDefault(s => s.Length)
+                        group dir by match ?? dir into grp
                         let changeCounts = grp.Select(p => Settings.DirectoryChangeCount[p])
                         select new { path = grp.Key, changeFreq = changeCounts.Sum(ch => ch.TimesChanged) / (double) changeCounts.Sum(ch => ch.TimesScanned) };
                     foreach (var chg in changes.OrderBy(ch => ch.changeFreq))
