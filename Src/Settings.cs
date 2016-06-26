@@ -9,6 +9,8 @@ namespace HoboMirror
     {
         public List<DirectoryGrouping> GroupDirectoriesForChangeReport = new List<DirectoryGrouping>();
         public AutoDictionary<string, ChangeCount> DirectoryChangeCount = new AutoDictionary<string, ChangeCount>(StringComparer.OrdinalIgnoreCase, _ => new ChangeCount());
+        public decimal? SkipRefreshAccessControlDays = null;
+        public DateTime LastRefreshAccessControl = default(DateTime);
     }
 
     class ChangeCount

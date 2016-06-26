@@ -19,6 +19,7 @@ namespace HoboMirror
     {
         static CmdLine Args;
         static Settings Settings;
+        static bool RefreshAccessControl = true;
 
         static IO.StreamWriter ActionLog, ChangeLog, ErrorLog, DebugLog;
 
@@ -64,6 +65,9 @@ namespace HoboMirror
                     Settings = new Settings();
                     ClassifyJson.SerializeToFile(Settings, Args.SettingsPath);
                 }
+                RefreshAccessControl = Settings.SkipRefreshAccessControlDays == null || (Settings.LastRefreshAccessControl + TimeSpan.FromDays((double) Settings.SkipRefreshAccessControlDays) < DateTime.UtcNow);
+                if (RefreshAccessControl)
+                    Settings.LastRefreshAccessControl = DateTime.UtcNow;
             }
 
             // Initialise log files
@@ -275,10 +279,13 @@ namespace HoboMirror
             try
             {
                 var result = new FileSystemInfoMetadata();
-                if (fsi is FileInfo)
-                    result.FileSecurity = (fsi as FileInfo).GetAccessControl();
-                else
-                    result.DirectorySecurity = (fsi as DirectoryInfo).GetAccessControl();
+                if (RefreshAccessControl)
+                {
+                    if (fsi is FileInfo)
+                        result.FileSecurity = (fsi as FileInfo).GetAccessControl();
+                    else
+                        result.DirectorySecurity = (fsi as DirectoryInfo).GetAccessControl();
+                }
                 result.Attributes = fsi.Attributes;
                 result.CreationTimeUtc = fsi.CreationTimeUtc;
                 result.LastWriteTimeUtc = fsi.LastWriteTimeUtc;
@@ -308,17 +315,19 @@ namespace HoboMirror
             }
             try
             {
-                try
+                if (RefreshAccessControl)
                 {
-                    if (fsi is FileInfo)
-                        (fsi as FileInfo).SetAccessControl(data.FileSecurity);
-                    else
-                        (fsi as DirectoryInfo).SetAccessControl(data.DirectorySecurity);
-                }
-                catch (IO.IOException)
-                {
-                    LogError($"Unable to set {(fsi is FileInfo ? "file" : "directory")} security parameters: {fsi.FullName}");
-#warning TODO: why does this fail on many files?
+                    try
+                    {
+                        if (fsi is FileInfo)
+                            (fsi as FileInfo).SetAccessControl(data.FileSecurity);
+                        else
+                            (fsi as DirectoryInfo).SetAccessControl(data.DirectorySecurity);
+                    }
+                    catch (IO.IOException)
+                    {
+                        LogError($"Unable to set {(fsi is FileInfo ? "file" : "directory")} security parameters: {fsi.FullName}");
+                    }
                 }
                 fsi.Attributes = data.Attributes;
                 if (fsi is FileInfo)
