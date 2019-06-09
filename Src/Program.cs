@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Linq;
@@ -99,10 +99,6 @@ namespace HoboMirror
                 // Log header
                 LogAll("==============");
                 LogAll($"Started at {DateTime.Now}");
-                foreach (var task in tasks)
-                    LogAll($"    Mirror task: from “{task.FromPath}” to “{task.ToPath}”");
-                foreach (var ignore in Args.IgnorePath)
-                    LogAll($"    Ignore path: “{ignore}”");
 
                 // Refuse to mirror without a guard file
                 foreach (var task in tasks)
@@ -132,6 +128,15 @@ namespace HoboMirror
                 // Perform the mirroring
                 var volumes = tasks.GroupBy(t => t.FromVolume).Select(g => g.Key).ToArray();
                 using (var vsc = new VolumeShadowCopy(volumes))
+                {
+                    foreach (var task in tasks)
+                    {
+                        var fromPath = Path.Combine(vsc.Volumes[task.FromVolume].SnapshotPath, task.FromPath.Substring(task.FromVolume.Length));
+                        LogAll($"    Mirror task: from “{task.FromPath}” to “{task.ToPath}” (volume snapshot path: {fromPath})");
+                    }
+                    foreach (var ignore in Args.IgnorePath)
+                        LogAll($"    Ignore path: “{ignore}”");
+
                     foreach (var task in tasks)
                     {
                         var fromPath = Path.Combine(vsc.Volumes[task.FromVolume].SnapshotPath, task.FromPath.Substring(task.FromVolume.Length));
@@ -139,6 +144,7 @@ namespace HoboMirror
                             CreateDirectory(task.ToPath);
                         Mirror(new DirectoryInfo(fromPath), new DirectoryInfo(task.ToPath), str => str.Replace(vsc.Volumes[task.FromVolume].SnapshotPath, task.FromVolume).Replace(@"\\", @"\"));
                     }
+                }
 
                 // Save settings file
                 if (Args.SettingsPath != null)
