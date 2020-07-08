@@ -421,7 +421,6 @@ namespace HoboMirror
                         else
                             LogChange("Found file which used to be a file reparse point: ", getOriginalFromPath(fromFile.FullName));
                         anyChanges = true;
-                        DeleteFile(toFile);
                         notNew = true;
                         toFile = null;
                     }
@@ -434,12 +433,28 @@ namespace HoboMirror
                         LogChange("Found new file: ", getOriginalFromPath(fromFile.FullName));
                     anyChanges = true;
                     var destPath = Path.Combine(to.FullName, fromFile.Name);
-                    LogAction($"Copy file: {destPath}\r\n   from: {getOriginalFromPath(fromFile.FullName)}");
-                    var res = fromFile.CopyTo(destPath, CopyOptions.CopySymbolicLink, CopyProgress, null);
+                    var destTemp = Path.Combine(to.FullName, $"~HoboMirror-{Rnd.GenerateString(16)}.tmp");
+                    var res = new FileInfo(fromFile.FullName).CopyTo(destTemp, CopyOptions.CopySymbolicLink, CopyProgress, null);
                     if (res.ErrorCode != 0)
                         LogError($"Copy failed ({res.ErrorMessage}): {getOriginalFromPath(fromFile.FullName)}");
                     else
+                    {
+                        if (notNew)
+                        {
+                            var delFile = new FileInfo(destPath);
+                            try
+                            {
+                                delFile.Delete(ignoreReadOnly: true);
+                            }
+                            catch (UnauthorizedAccessException)
+                            {
+                                LogError($"Unable to delete (for copy) {(delFile.IsReparsePoint() ? "file reparse point" : "file")} (unauthorized access): {delFile.FullName}");
+                            }
+                        }
+                        File.Move(destTemp, destPath, MoveOptions.None);
                         toFile = new FileInfo(destPath);
+                        LogAction($"Copy file: {destPath}\r\n   from: {getOriginalFromPath(fromFile.FullName)}");
+                    }
                 }
 
                 // Update attributes
