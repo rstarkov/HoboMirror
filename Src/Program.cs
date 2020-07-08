@@ -435,12 +435,16 @@ namespace HoboMirror
                     anyChanges = true;
                     var destPath = Path.Combine(to.FullName, fromFile.Name);
                     LogAction($"Copy file: {destPath}\r\n   from: {getOriginalFromPath(fromFile.FullName)}");
-                    fromFile.CopyTo(destPath, CopyOptions.CopySymbolicLink, CopyProgress, null);
-                    toFile = new FileInfo(destPath);
+                    var res = fromFile.CopyTo(destPath, CopyOptions.CopySymbolicLink, CopyProgress, null);
+                    if (res.ErrorCode != 0)
+                        LogError($"Copy failed ({res.ErrorMessage}): {getOriginalFromPath(fromFile.FullName)}");
+                    else
+                        toFile = new FileInfo(destPath);
                 }
 
                 // Update attributes
-                SetMetadata(toFile, GetMetadata(fromFile));
+                if (toFile != null)
+                    SetMetadata(toFile, GetMetadata(fromFile));
             }
 
             // Process source directories that are reparse points
