@@ -24,7 +24,7 @@ namespace HoboMirror
 
         [Option("-i", "--ignore")]
         [DocumentationRhoML("{h}Specifies one or more source paths to ignore.{}\nThe specified paths will not be mirrored, and will be deleted from the target if already present.")]
-        public string[] IgnorePath = null;
+        public string[] IgnorePath = new string[0];
 
         [Option("-s", "--settings")]
         [DocumentationRhoML("{h}Specifies a file containing additional settings.{}\nIf specified, additional features become available, for example change statistics. A blank file is created if it doesn't exist.")]
