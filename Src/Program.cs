@@ -20,6 +20,7 @@ namespace HoboMirror
         static CmdLine Args;
         static Settings Settings;
         static bool RefreshAccessControl = true;
+        static bool UpdateMetadata = true;
 
         static IO.StreamWriter ActionLog, ChangeLog, ErrorLog, DebugLog;
 
@@ -68,6 +69,8 @@ namespace HoboMirror
                 RefreshAccessControl = Settings.SkipRefreshAccessControlDays == null || (Settings.LastRefreshAccessControl + TimeSpan.FromDays((double) Settings.SkipRefreshAccessControlDays) < DateTime.UtcNow);
                 if (RefreshAccessControl)
                     Settings.LastRefreshAccessControl = DateTime.UtcNow;
+                Console.WriteLine($"Refresh access control: {RefreshAccessControl}");
+                Console.WriteLine($"Update metadata: {UpdateMetadata}");
             }
 
             // Initialise log files
@@ -282,6 +285,8 @@ namespace HoboMirror
 
         private static FileSystemInfoMetadata GetMetadata(FileSystemInfo fsi)
         {
+            if (!UpdateMetadata)
+                return null;
             try
             {
                 var result = new FileSystemInfoMetadata();
@@ -314,6 +319,8 @@ namespace HoboMirror
 
         private static void SetMetadata(FileSystemInfo fsi, FileSystemInfoMetadata data)
         {
+            if (!UpdateMetadata)
+                return;
             if (data == null)
             {
                 LogError($"Unable to set {(fsi is FileInfo ? "file" : "directory")} metadata (source metadata not available): {fsi.FullName}");
