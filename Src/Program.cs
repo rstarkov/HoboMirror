@@ -1,5 +1,6 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
+using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Linq;
 using System.Reflection;
@@ -19,6 +20,7 @@ namespace HoboMirror
     {
         static CmdLine Args;
         static Settings Settings;
+        static bool UseVolumeShadowCopy = true;
         static bool RefreshAccessControl = true;
         static bool UpdateMetadata = true;
 
@@ -130,11 +132,12 @@ namespace HoboMirror
 
                 // Perform the mirroring
                 var volumes = tasks.GroupBy(t => t.FromVolume).Select(g => g.Key).ToArray();
-                using (var vsc = new VolumeShadowCopy(volumes))
+                using (var vsc = UseVolumeShadowCopy ? new VolumeShadowCopy(volumes) : null)
                 {
+                    var vscVolumes = UseVolumeShadowCopy ? vsc.Volumes : new ReadOnlyDictionary<string, VolumeShadowCopyVol>(volumes.ToDictionary(vol => vol, vol => new VolumeShadowCopyVol { Path = vol, SnapshotPath = vol }));
                     foreach (var task in tasks)
                     {
-                        var fromPath = Path.Combine(vsc.Volumes[task.FromVolume].SnapshotPath, task.FromPath.Substring(task.FromVolume.Length));
+                        var fromPath = Path.Combine(vscVolumes[task.FromVolume].SnapshotPath, task.FromPath.Substring(task.FromVolume.Length));
                         LogAll($"    Mirror task: from “{task.FromPath}” to “{task.ToPath}” (volume snapshot path: {fromPath})");
                     }
                     foreach (var ignore in Args.IgnorePath)
@@ -142,10 +145,10 @@ namespace HoboMirror
 
                     foreach (var task in tasks)
                     {
-                        var fromPath = Path.Combine(vsc.Volumes[task.FromVolume].SnapshotPath, task.FromPath.Substring(task.FromVolume.Length));
+                        var fromPath = Path.Combine(vscVolumes[task.FromVolume].SnapshotPath, task.FromPath.Substring(task.FromVolume.Length));
                         if (!Directory.Exists(task.ToPath))
                             CreateDirectory(task.ToPath);
-                        Mirror(new DirectoryInfo(fromPath), new DirectoryInfo(task.ToPath), str => str.Replace(vsc.Volumes[task.FromVolume].SnapshotPath, task.FromVolume).Replace(@"\\", @"\"));
+                        Mirror(new DirectoryInfo(fromPath), new DirectoryInfo(task.ToPath), str => str.Replace(vscVolumes[task.FromVolume].SnapshotPath, task.FromVolume).Replace(@"\\", @"\"));
                     }
                 }
 
