@@ -246,14 +246,13 @@ namespace HoboMirror
                 return;
             }
 
-            if (file.IsReparsePoint())
-                LogAction($"Delete file reparse point: {file.FullName}");
-            else
-                LogAction($"Delete file: {file.FullName}");
-
             try
             {
                 file.Delete(ignoreReadOnly: true);
+                if (file.IsReparsePoint())
+                    LogAction($"Delete file reparse point: {file.FullName}");
+                else
+                    LogAction($"Delete file: {file.FullName}");
             }
             catch (UnauthorizedAccessException)
             {
@@ -263,8 +262,15 @@ namespace HoboMirror
 
         private static void CreateDirectory(string fullName)
         {
-            LogAction($"Create directory: {fullName}");
-            Directory.CreateDirectory(fullName);
+            try
+            {
+                Directory.CreateDirectory(fullName);
+                LogAction($"Create directory: {fullName}");
+            }
+            catch (UnauthorizedAccessException)
+            {
+                LogError($"Unable to create directory (unauthorized access): {fullName}");
+            }
         }
 
         private static void DeleteDirectory(DirectoryInfo dir)
@@ -273,8 +279,15 @@ namespace HoboMirror
             // Also this lets us log every action.
             if (dir.IsReparsePoint())
             {
-                LogAction($"Delete directory reparse point: {dir.FullName}");
-                dir.Delete(recursive: false, ignoreReadOnly: true);
+                try
+                {
+                    dir.Delete(recursive: false, ignoreReadOnly: true);
+                    LogAction($"Delete directory reparse point: {dir.FullName}");
+                }
+                catch (UnauthorizedAccessException)
+                {
+                    LogError($"Unable to delete directory reparse point (unauthorized access): {dir.FullName}");
+                }
                 return;
             }
 
@@ -282,8 +295,15 @@ namespace HoboMirror
                 DeleteFile(file);
             foreach (var subdir in dir.GetDirectories())
                 DeleteDirectory(subdir);
-            LogAction($"Delete empty directory: {dir.FullName}");
-            dir.Delete(recursive: false, ignoreReadOnly: true);
+            try
+            {
+                dir.Delete(recursive: false, ignoreReadOnly: true);
+                LogAction($"Delete empty directory: {dir.FullName}");
+            }
+            catch (UnauthorizedAccessException)
+            {
+                LogError($"Unable to delete empty directory (unauthorized access): {dir.FullName}");
+            }
         }
 
         private static FileSystemInfoMetadata GetMetadata(FileSystemInfo fsi)
@@ -445,8 +465,9 @@ namespace HoboMirror
                     var destPath = Path.Combine(to.FullName, fromFile.Name);
                     var destTemp = Path.Combine(to.FullName, $"~HoboMirror-{Rnd.GenerateString(16)}.tmp");
                     var res = new FileInfo(fromFile.FullName).CopyTo(destTemp, CopyOptions.CopySymbolicLink, CopyProgress, null);
+#warning TODO: this does not distinguish critical and non-critical errors
                     if (res.ErrorCode != 0)
-                        LogError($"Copy failed ({res.ErrorMessage}): {getOriginalFromPath(fromFile.FullName)}");
+                        LogError($"Unable to copy file ({res.ErrorMessage}): {getOriginalFromPath(fromFile.FullName)}");
                     else
                     {
                         if (notNew)
