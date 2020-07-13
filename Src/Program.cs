@@ -24,7 +24,7 @@ namespace HoboMirror
         static bool RefreshAccessControl = true;
         static bool UpdateMetadata = true;
 
-        static IO.StreamWriter ActionLog, ChangeLog, ErrorLog, DebugLog;
+        static IO.StreamWriter ActionLog, ChangeLog, ErrorLog, CriticalErrorLog, DebugLog;
 
         static int Main(string[] args)
         {
@@ -84,6 +84,7 @@ namespace HoboMirror
                 ActionLog = new IO.StreamWriter(IO.File.Open(Path.Combine(Args.LogPath, $"HoboMirror-Actions.{DateTime.Today:yyyy-MM-dd}.txt"), IO.FileMode.Append, IO.FileAccess.Write, IO.FileShare.Read));
                 ChangeLog = new IO.StreamWriter(IO.File.Open(Path.Combine(Args.LogPath, $"HoboMirror-Changes.{DateTime.Today:yyyy-MM-dd}.txt"), IO.FileMode.Append, IO.FileAccess.Write, IO.FileShare.Read));
                 ErrorLog = new IO.StreamWriter(IO.File.Open(Path.Combine(Args.LogPath, $"HoboMirror-Errors.{DateTime.Today:yyyy-MM-dd}.txt"), IO.FileMode.Append, IO.FileAccess.Write, IO.FileShare.Read));
+                CriticalErrorLog = new IO.StreamWriter(IO.File.Open(Path.Combine(Args.LogPath, $"HoboMirror-ErrorsCritical.{DateTime.Today:yyyy-MM-dd}.txt"), IO.FileMode.Append, IO.FileAccess.Write, IO.FileShare.Read));
                 DebugLog = new IO.StreamWriter(IO.File.Open(Path.Combine(Args.LogPath, $"HoboMirror-Debug.{DateTime.Today:yyyy-MM-dd}.txt"), IO.FileMode.Append, IO.FileAccess.Write, IO.FileShare.Read));
             }
 
@@ -184,7 +185,7 @@ namespace HoboMirror
                 // Close log files
                 if (Args.LogPath != null)
                 {
-                    foreach (var log in new[] { ActionLog, ChangeLog, ErrorLog, DebugLog })
+                    foreach (var log in new[] { ActionLog, ChangeLog, ErrorLog, CriticalErrorLog, DebugLog })
                     {
                         log.WriteLine($"Ended at {DateTime.Now}. Time taken: {(DateTime.UtcNow - startTime).TotalMinutes:#,0.0} minutes");
                         log.Dispose();
@@ -216,6 +217,13 @@ namespace HoboMirror
             ErrorLog?.Flush();
         }
 
+        public static void LogCriticalError(string text)
+        {
+            ConsoleUtil.WriteParagraphs(text.Color(ConsoleColor.Red));
+            CriticalErrorLog?.WriteLine(text);
+            CriticalErrorLog?.Flush();
+        }
+
         public static void LogDebug(string text)
         {
             //ConsoleUtil.WriteParagraphs(text.Color(ConsoleColor.DarkGray));
@@ -232,11 +240,45 @@ namespace HoboMirror
             ChangeLog?.Flush();
             ErrorLog?.WriteLine(text);
             ErrorLog?.Flush();
+            CriticalErrorLog?.WriteLine(text);
+            CriticalErrorLog?.Flush();
             DebugLog?.WriteLine(text);
             DebugLog?.Flush();
         }
 
         private static HashSet<string> Changes = new HashSet<string>();
+
+        private static void TryCatchIo(Action action, Func<string, string> formatError)
+        {
+            TryCatchIo<object>(() =>
+            {
+                action();
+                return null;
+            }, formatError);
+        }
+
+        private static T TryCatchIo<T>(Func<T> action, Func<string, string> formatError)
+        {
+            try
+            {
+                return action();
+            }
+            catch (UnauthorizedAccessException)
+            {
+                LogError(formatError("unauthorized access"));
+            }
+            catch (IO.FileNotFoundException)
+            {
+                // Can be thrown if permissions are extremely restrictive for some reason
+                LogError(formatError("file not found"));
+            }
+            catch (Exception e)
+            {
+                LogError(formatError($"{e.GetType().Name}, {e.Message}"));
+                LogCriticalError(formatError($"{e.GetType().Name}, {e.Message}"));
+            }
+            return default;
+        }
 
         private static void DeleteFile(FileInfo file)
         {
@@ -246,31 +288,23 @@ namespace HoboMirror
                 return;
             }
 
-            try
+            TryCatchIo(() =>
             {
                 file.Delete(ignoreReadOnly: true);
                 if (file.IsReparsePoint())
                     LogAction($"Delete file reparse point: {file.FullName}");
                 else
                     LogAction($"Delete file: {file.FullName}");
-            }
-            catch (UnauthorizedAccessException)
-            {
-                LogError($"Unable to delete {(file.IsReparsePoint() ? "file reparse point" : "file")} (unauthorized access): {file.FullName}");
-            }
+            }, err => $"Unable to delete {(file.IsReparsePoint() ? "file reparse point" : "file")} ({err}): {file.FullName}");
         }
 
         private static void CreateDirectory(string fullName)
         {
-            try
+            TryCatchIo(() =>
             {
                 Directory.CreateDirectory(fullName);
                 LogAction($"Create directory: {fullName}");
-            }
-            catch (UnauthorizedAccessException)
-            {
-                LogError($"Unable to create directory (unauthorized access): {fullName}");
-            }
+            }, err => $"Unable to create directory ({err}): {fullName}");
         }
 
         private static void DeleteDirectory(DirectoryInfo dir)
@@ -279,38 +313,42 @@ namespace HoboMirror
             // Also this lets us log every action.
             if (dir.IsReparsePoint())
             {
-                try
+                TryCatchIo(() =>
                 {
                     dir.Delete(recursive: false, ignoreReadOnly: true);
                     LogAction($"Delete directory reparse point: {dir.FullName}");
-                }
-                catch (UnauthorizedAccessException)
-                {
-                    LogError($"Unable to delete directory reparse point (unauthorized access): {dir.FullName}");
-                }
+                }, err => $"Unable to delete directory reparse point ({err}): {dir.FullName}");
                 return;
             }
 
-            foreach (var file in dir.GetFiles())
+            FileInfo[] files = null;
+            DirectoryInfo[] dirs = null;
+            var ok = TryCatchIo(() =>
+            {
+                files = dir.GetFiles();
+                dirs = dir.GetDirectories();
+                return true;
+            }, err => $"Unable to list directory for deletion ({err}): {dir.FullName}");
+            if (!ok)
+                return;
+
+            foreach (var file in files)
                 DeleteFile(file);
-            foreach (var subdir in dir.GetDirectories())
+            foreach (var subdir in dirs)
                 DeleteDirectory(subdir);
-            try
+
+            TryCatchIo(() =>
             {
                 dir.Delete(recursive: false, ignoreReadOnly: true);
                 LogAction($"Delete empty directory: {dir.FullName}");
-            }
-            catch (UnauthorizedAccessException)
-            {
-                LogError($"Unable to delete empty directory (unauthorized access): {dir.FullName}");
-            }
+            }, err => $"Unable to delete empty directory ({err}): {dir.FullName}");
         }
 
         private static FileSystemInfoMetadata GetMetadata(FileSystemInfo fsi)
         {
             if (!UpdateMetadata)
                 return null;
-            try
+            return TryCatchIo(() =>
             {
                 var result = new FileSystemInfoMetadata();
                 if (RefreshAccessControl)
@@ -326,18 +364,7 @@ namespace HoboMirror
                 result.LastAccessTimeUtc = fsi.LastAccessTimeUtc;
 #warning TODO: if the source is a reparse point, this probably copies timestamps from the linked file instead. If source points to non-existent file, this will probably fail
                 return result;
-            }
-            catch (UnauthorizedAccessException)
-            {
-                LogError($"Unable to get {(fsi is FileInfo ? "file" : "directory")} metadata (unauthorized access): {fsi.FullName}");
-                return null;
-            }
-            catch (IO.FileNotFoundException)
-            {
-                // Thrown if permissions are extremely restrictive for some reason
-                LogError($"Unable to get {(fsi is FileInfo ? "file" : "directory")} metadata (file not found): {fsi.FullName}");
-                return null;
-            }
+            }, err => $"Unable to get {(fsi is FileInfo ? "file" : "directory")} metadata ({err}): {fsi.FullName}");
         }
 
         private static void SetMetadata(FileSystemInfo fsi, FileSystemInfoMetadata data)
@@ -349,7 +376,7 @@ namespace HoboMirror
                 LogError($"Unable to set {(fsi is FileInfo ? "file" : "directory")} metadata (source metadata not available): {fsi.FullName}");
                 return;
             }
-            try
+            TryCatchIo(() =>
             {
                 if (RefreshAccessControl)
                 {
@@ -370,11 +397,7 @@ namespace HoboMirror
                     File.SetTimestampsUtc(fsi.FullName, data.CreationTimeUtc, data.LastAccessTimeUtc, data.LastWriteTimeUtc, true, PathFormat.FullPath);
                 else
                     Directory.SetTimestampsUtc(fsi.FullName, data.CreationTimeUtc, data.LastAccessTimeUtc, data.LastWriteTimeUtc, true, PathFormat.FullPath);
-            }
-            catch (UnauthorizedAccessException)
-            {
-                LogError($"Unable to set {(fsi is FileInfo ? "file" : "directory")} metadata (unauthorized access): {fsi.FullName}");
-            }
+            }, err => $"Unable to set {(fsi is FileInfo ? "file" : "directory")} metadata ({err}): {fsi.FullName}");
         }
 
         private static void Mirror(DirectoryInfo from, DirectoryInfo to, Func<string, string> getOriginalFromPath)
