@@ -180,6 +180,14 @@ namespace HoboMirror
 
                 return 0;
             }
+#if !DEBUG
+            catch (Exception e)
+            {
+                LogCriticalError($"Unhandled exception ({e.GetType().Name}): {e.Message}");
+                LogCriticalError(e.StackTrace);
+                return 1;
+            }
+#endif
             finally
             {
                 // Close log files
