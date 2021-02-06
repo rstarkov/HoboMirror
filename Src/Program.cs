@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
@@ -453,67 +453,70 @@ namespace HoboMirror
             // Copy / update all files from source
             foreach (var fromFile in fromFiles.Values)
             {
-                var toFile = toFiles.Get(fromFile.Name, null);
-                bool notNew = false;
-
-                // For existing files, check if the file contents are out of date
-                if (toFile != null)
+                TryCatchIo(() =>
                 {
-                    if (fromFile.LastWriteTimeUtc != toFile.LastWriteTimeUtc || fromFile.Length != toFile.Length || fromFile.IsReparsePoint() != toFile.IsReparsePoint())
+                    var toFile = toFiles.Get(fromFile.Name, null);
+                    bool notNew = false;
+
+                    // For existing files, check if the file contents are out of date
+                    if (toFile != null)
                     {
+                        if (fromFile.LastWriteTimeUtc != toFile.LastWriteTimeUtc || fromFile.Length != toFile.Length || fromFile.IsReparsePoint() != toFile.IsReparsePoint())
+                        {
 #warning TODO: if it was already a reparse point with a different target, this check will miss it, because changing the target does not change last write time
-                        if (fromFile.IsReparsePoint() == toFile.IsReparsePoint())
-                        {
-                            LogChange("Found modified file: ", getOriginalFromPath(fromFile.FullName));
-                            LogDebug($"Modified file: {getOriginalFromPath(fromFile.FullName)}");
-                            LogDebug($"    Last write time: source={fromFile.LastWriteTimeUtc.ToIsoStringRoundtrip()}, target={toFile.LastWriteTimeUtc.ToIsoStringRoundtrip()}");
-                            LogDebug($"    Length: source={fromFile.Length:#,0}, target={toFile.Length:#,0}");
+                            if (fromFile.IsReparsePoint() == toFile.IsReparsePoint())
+                            {
+                                LogChange("Found modified file: ", getOriginalFromPath(fromFile.FullName));
+                                LogDebug($"Modified file: {getOriginalFromPath(fromFile.FullName)}");
+                                LogDebug($"    Last write time: source={fromFile.LastWriteTimeUtc.ToIsoStringRoundtrip()}, target={toFile.LastWriteTimeUtc.ToIsoStringRoundtrip()}");
+                                LogDebug($"    Length: source={fromFile.Length:#,0}, target={toFile.Length:#,0}");
+                            }
+                            else if (fromFile.IsReparsePoint())
+                                LogChange("Found file reparse point which used to be a file: ", getOriginalFromPath(fromFile.FullName));
+                            else
+                                LogChange("Found file which used to be a file reparse point: ", getOriginalFromPath(fromFile.FullName));
+                            anyChanges = true;
+                            notNew = true;
+                            toFile = null;
                         }
-                        else if (fromFile.IsReparsePoint())
-                            LogChange("Found file reparse point which used to be a file: ", getOriginalFromPath(fromFile.FullName));
-                        else
-                            LogChange("Found file which used to be a file reparse point: ", getOriginalFromPath(fromFile.FullName));
-                        anyChanges = true;
-                        notNew = true;
-                        toFile = null;
                     }
-                }
 
-                // Copy the file if required
-                if (toFile == null)
-                {
-                    if (!notNew)
-                        LogChange("Found new file: ", getOriginalFromPath(fromFile.FullName));
-                    anyChanges = true;
-                    var destPath = Path.Combine(to.FullName, fromFile.Name);
-                    var destTemp = Path.Combine(to.FullName, $"~HoboMirror-{Rnd.GenerateString(16)}.tmp");
-                    var res = new FileInfo(fromFile.FullName).CopyTo(destTemp, CopyOptions.CopySymbolicLink, CopyProgress, null);
-#warning TODO: this does not distinguish critical and non-critical errors
-                    if (res.ErrorCode != 0)
-                        LogError($"Unable to copy file ({res.ErrorMessage}): {getOriginalFromPath(fromFile.FullName)}");
-                    else
+                    // Copy the file if required
+                    if (toFile == null)
                     {
-                        if (notNew)
+                        if (!notNew)
+                            LogChange("Found new file: ", getOriginalFromPath(fromFile.FullName));
+                        anyChanges = true;
+                        var destPath = Path.Combine(to.FullName, fromFile.Name);
+                        var destTemp = Path.Combine(to.FullName, $"~HoboMirror-{Rnd.GenerateString(16)}.tmp");
+                        var res = TryCatchIo(() => new FileInfo(fromFile.FullName).CopyTo(destTemp, CopyOptions.CopySymbolicLink, CopyProgress, null), err => $"Unable to copy file ({err}): {getOriginalFromPath(fromFile.FullName)}");
+#warning TODO: this does not distinguish critical and non-critical errors
+                        if (res.ErrorCode != 0)
+                            LogError($"Unable to copy file ({res.ErrorMessage}): {getOriginalFromPath(fromFile.FullName)}");
+                        else
                         {
-                            var delFile = new FileInfo(destPath);
-                            try
+                            if (notNew)
                             {
-                                delFile.Delete(ignoreReadOnly: true);
+                                var delFile = new FileInfo(destPath);
+                                try
+                                {
+                                    delFile.Delete(ignoreReadOnly: true);
+                                }
+                                catch (UnauthorizedAccessException)
+                                {
+                                    LogError($"Unable to delete (for copy) {(delFile.IsReparsePoint() ? "file reparse point" : "file")} (unauthorized access): {delFile.FullName}");
+                                }
                             }
-                            catch (UnauthorizedAccessException)
-                            {
-                                LogError($"Unable to delete (for copy) {(delFile.IsReparsePoint() ? "file reparse point" : "file")} (unauthorized access): {delFile.FullName}");
-                            }
+                            File.Move(destTemp, destPath, MoveOptions.None);
+                            toFile = new FileInfo(destPath);
+                            LogAction($"Copy file: {destPath}\r\n   from: {getOriginalFromPath(fromFile.FullName)}");
                         }
-                        File.Move(destTemp, destPath, MoveOptions.None);
-                        toFile = new FileInfo(destPath);
-                        LogAction($"Copy file: {destPath}\r\n   from: {getOriginalFromPath(fromFile.FullName)}");
                     }
-                }
 
-                // Update attributes
-                if (toFile != null)
-                    SetMetadata(toFile, GetMetadata(fromFile));
+                    // Update attributes
+                    if (toFile != null)
+                        SetMetadata(toFile, GetMetadata(fromFile));
+                }, err => $"Unable to mirror file ({err}): {getOriginalFromPath(fromFile.FullName)}");
             }
 
             // Process source directories that are reparse points
