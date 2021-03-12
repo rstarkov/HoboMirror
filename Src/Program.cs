@@ -480,9 +480,9 @@ namespace HoboMirror
                                 LogDebug($"    Length: source={fromFile.Length:#,0}, target={toFile.Length:#,0}");
                             }
                             else if (fromFile.IsReparsePoint())
-                                LogChange("Found file reparse point which used to be a file: ", getOriginalFromPath(fromFile.FullName));
+                                LogChange("Found file symlink which used to be a file: ", getOriginalFromPath(fromFile.FullName));
                             else
-                                LogChange("Found file which used to be a file reparse point: ", getOriginalFromPath(fromFile.FullName));
+                                LogChange("Found file which used to be a file symlink: ", getOriginalFromPath(fromFile.FullName));
                             anyChanges = true;
                             notNew = true;
                             toFile = null;
@@ -499,7 +499,9 @@ namespace HoboMirror
                         var destTemp = Path.Combine(to.FullName, $"~HoboMirror-{Rnd.GenerateString(16)}.tmp");
                         var res = TryCatchIo(() => new FileInfo(fromFile.FullName).CopyTo(destTemp, CopyOptions.CopySymbolicLink, CopyProgress, null), err => $"Unable to copy file ({err}): {getOriginalFromPath(fromFile.FullName)}");
 #warning TODO: this does not distinguish critical and non-critical errors
-                        if (res.ErrorCode != 0)
+                        if (res == null)
+                        { /* nothing - we've already logged the error */ }
+                        else if (res.ErrorCode != 0)
                             LogError($"Unable to copy file ({res.ErrorMessage}): {getOriginalFromPath(fromFile.FullName)}");
                         else
                         {
@@ -530,20 +532,53 @@ namespace HoboMirror
             // Process source directories that are reparse points
             foreach (var fromDir in fromDirs.Values.Where(fromDir => fromDir.IsReparsePoint()))
             {
-                // Target might not exist, might be a matching reparse point, a non-matching reparse point, or a full-blown directory.
-                // The easiest thing to do is to always delete and re-create it.
-                var toDir = toDirs.Get(fromDir.Name, null);
-                if (toDir != null)
-                    DeleteDirectory(toDir);
-#warning TODO: detect change properly and improve logging
-                var destPath = Path.Combine(to.FullName, fromDir.Name);
-                var tgt = File.GetLinkTargetInfo(fromDir.FullName);
-                LogAction($"Create reparse point for {getOriginalFromPath(fromDir.FullName)}\r\n   at {destPath}\r\n   linked to {tgt.PrintName}");
-                File.CreateSymbolicLink(destPath, tgt.PrintName.StartsWith(@"\??\Volume") ? (@"\\?\" + tgt.PrintName.Substring(4)) : tgt.PrintName, SymbolicLinkTarget.Directory);
-#warning What if it was a junction?...
-                toDir = new DirectoryInfo(destPath);
-                // Copy attributes
-                SetMetadata(toDir, GetMetadata(fromDir));
+                // Target might not exist, might be a matching reparse point, a non-matching reparse point, or a full-blown directory. Reparse points can be junctions, symlinks, or an unsupported type
+                TryCatchIo(() =>
+                {
+                    bool needCreate = true;
+                    var src = GetLinkInfo(fromDir);
+                    var toDir = toDirs.Get(fromDir.Name, null);
+                    if (toDir == null)
+                    {
+                        LogChange($"Found new {src.EntryType}: ", getOriginalFromPath(fromDir.FullName));
+                    }
+                    else
+                    {
+                        // Target path exists. It could still be a directory, a junction, a symlink or an unsupported type.
+                        var tgt = GetLinkInfo(toDir); // could be null if it's just a normal directory
+                        if (tgt != null && tgt.EntryType == src.EntryType && tgt.LinkTarget == src.LinkTarget)
+                        {
+                            // it's a junction or a directory symlink, and is identical to the source
+                            needCreate = false;
+                        }
+                        else
+                        {
+                            // it's a directory, or is of the wrong type, or points to the wrong target
+                            if (tgt == null)
+                                LogChange($"Found {src.EntryType} which used to be a directory: ", getOriginalFromPath(fromDir.FullName));
+                            else if (tgt.EntryType != src.EntryType)
+                                LogChange($"Found {src.EntryType} which used to be a {tgt.EntryType}: ", getOriginalFromPath(fromDir.FullName));
+                            else
+                                LogChange($"Found modified {src.EntryType}: ", getOriginalFromPath(fromDir.FullName));
+                            DeleteDirectory(toDir);
+                        }
+                    }
+
+                    if (needCreate)
+                    {
+                        var destPath = Path.Combine(to.FullName, fromDir.Name);
+
+                        LogAction($"Create {src.EntryType} for {getOriginalFromPath(fromDir.FullName)}\r\n   at {destPath}\r\n   linked to {src.LinkTarget}");
+                        if (src.EntryType == EntryType.Junction)
+                            JunctionPoint.Create(destPath, src.LinkTarget, false);
+                        else
+                            File.CreateSymbolicLink(destPath, src.LinkTarget.StartsWith(@"\??\Volume") ? (@"\\?\" + src.LinkTarget.Substring(4)) : src.LinkTarget);
+                        toDir = new DirectoryInfo(destPath);
+                    }
+
+                    // Copy attributes
+                    SetMetadata(toDir, GetMetadata(fromDir));
+                }, err => $"Unable to mirror reparse point ({err}): {getOriginalFromPath(fromDir.FullName)}");
             }
 
             // Process source directories which are not reparse points
@@ -587,6 +622,22 @@ namespace HoboMirror
                 if (anyChanges)
                     Settings.DirectoryChangeCount[path].TimesChanged++;
             }
+        }
+
+        class LinkInfo
+        {
+            public EntryType EntryType;
+            public string LinkTarget; // null if not a symlink or a junction
+        }
+        enum EntryType { Symlink, Junction, UnknownReparsePoint }
+        private static LinkInfo GetLinkInfo(FileSystemInfo fsi)
+        {
+            if (!fsi.IsReparsePoint())
+                return null;
+            if (JunctionPoint.Exists(fsi.FullName))
+                return new LinkInfo { EntryType = EntryType.Junction, LinkTarget = JunctionPoint.GetTarget(fsi.FullName) };
+            try { return new LinkInfo { EntryType = EntryType.Symlink, LinkTarget = File.GetLinkTargetInfo(fsi.FullName).PrintName }; }
+            catch { return new LinkInfo { EntryType = EntryType.UnknownReparsePoint, LinkTarget = null }; }
         }
 
         static DateTime lastProgress;
