@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
@@ -14,6 +14,11 @@ using RT.Util.ExtensionMethods;
 using RT.Util.Serialization;
 using IO = System.IO;
 
+// Notes:
+// Sync* methods find and log the changes using LogChange. Act* methods perform and log modifications using LogAction
+// All Act* methods catch and log any possible IO error, and don't propagate exceptions. Sync methods don't need to, but SyncDir has a generic handler to avoid aborting entire recursive operations on first unexpected error
+// Critical errors are errors that don't come through "expected" error paths and indicate that HoboMirror has a bug / isn't handling all possible corner cases
+
 namespace HoboMirror
 {
     class Program
@@ -23,6 +28,8 @@ namespace HoboMirror
         static bool UseVolumeShadowCopy = true;
         static bool RefreshAccessControl = true;
         static bool UpdateMetadata = true;
+        static int Errors = 0;
+        static int CriticalErrors = 0;
 
         static IO.StreamWriter ActionLog, ChangeLog, ErrorLog, CriticalErrorLog, DebugLog;
 
@@ -146,30 +153,33 @@ namespace HoboMirror
 
                     foreach (var task in tasks)
                     {
-                        var fromPath = Path.Combine(vscVolumes[task.FromVolume].SnapshotPath, task.FromPath.Substring(task.FromVolume.Length));
+                        GetOriginalSrcPath = str => str.Replace(vscVolumes[task.FromVolume].SnapshotPath, task.FromVolume).Replace(@"\\", @"\");
                         if (!Directory.Exists(task.ToPath))
-                            CreateDirectory(task.ToPath);
-                        Mirror(new DirectoryInfo(fromPath), new DirectoryInfo(task.ToPath), str => str.Replace(vscVolumes[task.FromVolume].SnapshotPath, task.FromVolume).Replace(@"\\", @"\"));
+                            ActCreateDirectory(task.ToPath);
+                        var srcItem = CreateItem(new DirectoryInfo(Path.Combine(vscVolumes[task.FromVolume].SnapshotPath, task.FromPath.Substring(task.FromVolume.Length))));
+                        var tgtItem = CreateItem(new DirectoryInfo(task.ToPath));
+                        if (srcItem != null && tgtItem != null)
+                            SyncDir(srcItem, tgtItem);
+                        else
+                            LogError($"Unable to execute mirror task: {task.FromPath}");
                     }
                 }
 
-                // Save settings file
-                if (Args.SettingsPath != null)
-                    ClassifyJson.SerializeToFile(Settings, Args.SettingsPath);
-
-                // List changed directories
+                // List changed directories and update change counts
                 LogChange("", null);
                 LogChange("DIRECTORIES WITH AT LEAST ONE CHANGE:", null);
                 if (Settings == null)
                 {
-                    foreach (var chg in Changes.Order())
+                    foreach (var chg in ChangedDirs.Order())
                         LogChange("  " + chg, null);
                 }
                 else
                 {
+                    foreach (var dir in ChangedDirs)
+                        Settings.DirectoryChangeCount[dir].TimesChanged++;
                     LogChange("(sorted from rarely changing to frequently changing)", null);
                     var changes =
-                        from dir in Changes
+                        from dir in ChangedDirs
                         let match = Settings.GroupDirectoriesForChangeReport.Select(dg => dg.GetMatch(dir)).Where(m => m != null).MinElementOrDefault(s => s.Length)
                         group dir by match ?? dir into grp
                         let changeCounts = grp.Select(p => Settings.DirectoryChangeCount[p])
@@ -178,7 +188,11 @@ namespace HoboMirror
                         LogChange($"  {chg.path} — {chg.changeFreq:0.0%}", null);
                 }
 
-                return 0;
+                // Save settings file
+                if (Args.SettingsPath != null)
+                    ClassifyJson.SerializeToFile(Settings, Args.SettingsPath);
+
+                return CriticalErrors > 0 ? 2 : Errors > 0 ? 1 : 0;
             }
 #if !DEBUG
             catch (Exception e)
@@ -209,17 +223,19 @@ namespace HoboMirror
             ActionLog?.Flush();
         }
 
-        public static void LogChange(string text, string path)
+        public static void LogChange(string text, string path, string whatChanged = null)
         {
             if (path != null)
-                Changes.Add(Path.GetDirectoryName(path).WithSlash());
-            ConsoleUtil.WriteParagraphs((text + path).Color(ConsoleColor.Yellow));
-            ChangeLog?.WriteLine(text + path);
+                ChangedDirs.Add(Path.GetDirectoryName(path).WithSlash());
+            var msg = text + path + whatChanged;
+            ConsoleUtil.WriteParagraphs((text + path + whatChanged).Color(ConsoleColor.Yellow));
+            ChangeLog?.WriteLine(text + path + whatChanged);
             ChangeLog?.Flush();
         }
 
         public static void LogError(string text)
         {
+            Errors++;
             ConsoleUtil.WriteParagraphs(text.Color(ConsoleColor.Red));
             ErrorLog?.WriteLine(text);
             ErrorLog?.Flush();
@@ -227,6 +243,7 @@ namespace HoboMirror
 
         public static void LogCriticalError(string text)
         {
+            CriticalErrors++;
             ConsoleUtil.WriteParagraphs(text.Color(ConsoleColor.Red));
             CriticalErrorLog?.WriteLine(text);
             CriticalErrorLog?.Flush();
@@ -254,7 +271,27 @@ namespace HoboMirror
             DebugLog?.Flush();
         }
 
-        private static HashSet<string> Changes = new HashSet<string>();
+        private static HashSet<string> ChangedDirs = new HashSet<string>();
+
+        private static Func<string, string> GetOriginalSrcPath;
+
+        private static void TryCatchIoAction(string actionDesc, string affectedPath, Action action)
+        {
+            TryCatchIo(() =>
+            {
+                LogAction(actionDesc.Substring(0, 1).ToUpper() + actionDesc.Substring(1) + ": " + affectedPath);
+                action();
+            }, err => $"Unable to {actionDesc.Substring(0, 1).ToLower() + actionDesc.Substring(1)} ({err}): {affectedPath}");
+        }
+
+        private static T TryCatchIoAction<T>(string actionDesc, string affectedPath, Func<T> action)
+        {
+            return TryCatchIo(() =>
+            {
+                LogAction(actionDesc + ": " + affectedPath);
+                return action();
+            }, err => $"Unable to {actionDesc.Substring(0, 1).ToLower() + actionDesc.Substring(1)} ({err}): {affectedPath}");
+        }
 
         private static void TryCatchIo(Action action, Func<string, string> formatError)
         {
@@ -283,77 +320,13 @@ namespace HoboMirror
             catch (Exception e)
             {
                 LogError(formatError($"{e.GetType().Name}, {e.Message}"));
-                LogCriticalError(formatError($"{e.GetType().Name}, {e.Message}"));
             }
             return default;
         }
 
-        private static void DeleteFile(FileInfo file)
+        private static FileSystemInfoMetadata GetMetadata(FileSystemInfo info)
         {
-            if (!file.Exists)
-            {
-                LogError($"File to be deleted does not exist: {file.FullName}");
-                return;
-            }
-
-            TryCatchIo(() =>
-            {
-                file.Delete(ignoreReadOnly: true);
-                if (file.IsReparsePoint())
-                    LogAction($"Delete file reparse point: {file.FullName}");
-                else
-                    LogAction($"Delete file: {file.FullName}");
-            }, err => $"Unable to delete {(file.IsReparsePoint() ? "file reparse point" : "file")} ({err}): {file.FullName}");
-        }
-
-        private static void CreateDirectory(string fullName)
-        {
-            TryCatchIo(() =>
-            {
-                Directory.CreateDirectory(fullName);
-                LogAction($"Create directory: {fullName}");
-            }, err => $"Unable to create directory ({err}): {fullName}");
-        }
-
-        private static void DeleteDirectory(DirectoryInfo dir)
-        {
-            // AlphaFS already does this, but just in case it stops doing this in a future release we do this explicitly, because the consequences of following a reparse point during a delete are dire.
-            // Also this lets us log every action.
-            if (dir.IsReparsePoint())
-            {
-                TryCatchIo(() =>
-                {
-                    dir.Delete(recursive: false, ignoreReadOnly: true);
-                    LogAction($"Delete directory reparse point: {dir.FullName}");
-                }, err => $"Unable to delete directory reparse point ({err}): {dir.FullName}");
-                return;
-            }
-
-            FileInfo[] files = null;
-            DirectoryInfo[] dirs = null;
-            var ok = TryCatchIo(() =>
-            {
-                files = dir.GetFiles();
-                dirs = dir.GetDirectories();
-                return true;
-            }, err => $"Unable to list directory for deletion ({err}): {dir.FullName}");
-            if (!ok)
-                return;
-
-            foreach (var file in files)
-                DeleteFile(file);
-            foreach (var subdir in dirs)
-                DeleteDirectory(subdir);
-
-            TryCatchIo(() =>
-            {
-                dir.Delete(recursive: false, ignoreReadOnly: true);
-                LogAction($"Delete empty directory: {dir.FullName}");
-            }, err => $"Unable to delete empty directory ({err}): {dir.FullName}");
-        }
-
-        private static FileSystemInfoMetadata GetMetadata(FileSystemInfo fsi)
-        {
+#warning TODO: if the source is a reparse point, this copies timestamps from the linked file instead. If source points to non-existent file, it fails
             if (!UpdateMetadata)
                 return null;
             return TryCatchIo(() =>
@@ -361,287 +334,383 @@ namespace HoboMirror
                 var result = new FileSystemInfoMetadata();
                 if (RefreshAccessControl)
                 {
-                    if (fsi is FileInfo)
-                        result.FileSecurity = (fsi as FileInfo).GetAccessControl();
+                    if (info is FileInfo)
+                        result.FileSecurity = (info as FileInfo).GetAccessControl();
                     else
-                        result.DirectorySecurity = (fsi as DirectoryInfo).GetAccessControl();
+                        result.DirectorySecurity = (info as DirectoryInfo).GetAccessControl();
                 }
-                result.Attributes = fsi.Attributes;
-                result.CreationTimeUtc = fsi.CreationTimeUtc;
-                result.LastWriteTimeUtc = fsi.LastWriteTimeUtc;
-                result.LastAccessTimeUtc = fsi.LastAccessTimeUtc;
-#warning TODO: if the source is a reparse point, this probably copies timestamps from the linked file instead. If source points to non-existent file, this will probably fail
+                result.Attributes = info.Attributes;
+                result.CreationTimeUtc = info.CreationTimeUtc;
+                result.LastWriteTimeUtc = info.LastWriteTimeUtc;
+                result.LastAccessTimeUtc = info.LastAccessTimeUtc;
+                if (result.CreationTimeUtc.Year == 1601 && result.CreationTimeUtc.Month == 1 && result.CreationTimeUtc.Day == 1)
+                    throw new Exception("unknown error, invalid timestamp"); // currently this happens silently when getting the metadata of an invalid symlink
                 return result;
-            }, err => $"Unable to get {(fsi is FileInfo ? "file" : "directory")} metadata ({err}): {fsi.FullName}");
+            }, err => $"Unable to get {(info is FileInfo ? "file" : "directory")} metadata ({err}): {info.FullName}");
         }
 
-        private static void SetMetadata(FileSystemInfo fsi, FileSystemInfoMetadata data)
+        private static void SetMetadata(FileSystemInfo info, FileSystemInfoMetadata data)
         {
             if (!UpdateMetadata)
                 return;
             if (data == null)
             {
-                LogError($"Unable to set {(fsi is FileInfo ? "file" : "directory")} metadata (source metadata not available): {fsi.FullName}");
+                LogError($"Unable to set {(info is FileInfo ? "file" : "directory")} metadata (source metadata not available): {info.FullName}");
                 return;
             }
+
+            if (RefreshAccessControl)
+            {
+                var ok = TryCatchIo(() =>
+                {
+                    if (info is FileInfo)
+                        (info as FileInfo).SetAccessControl(data.FileSecurity);
+                    else
+                        (info as DirectoryInfo).SetAccessControl(data.DirectorySecurity);
+                    return true;
+                }, err => $"Unable to set {(info is FileInfo ? "file" : "directory")} security parameters ({err}): {info.FullName}");
+                if (!ok)
+                    return;
+            }
+
             TryCatchIo(() =>
             {
-                if (RefreshAccessControl)
-                {
-                    try
-                    {
-                        if (fsi is FileInfo)
-                            (fsi as FileInfo).SetAccessControl(data.FileSecurity);
-                        else
-                            (fsi as DirectoryInfo).SetAccessControl(data.DirectorySecurity);
-                    }
-                    catch (IO.IOException)
-                    {
-                        LogError($"Unable to set {(fsi is FileInfo ? "file" : "directory")} security parameters: {fsi.FullName}");
-                    }
-                }
-                fsi.Attributes = data.Attributes;
-                if (fsi is FileInfo)
-                    File.SetTimestampsUtc(fsi.FullName, data.CreationTimeUtc, data.LastAccessTimeUtc, data.LastWriteTimeUtc, true, PathFormat.FullPath);
+                info.Attributes = data.Attributes;
+                if (info is FileInfo)
+                    File.SetTimestampsUtc(info.FullName, data.CreationTimeUtc, data.LastAccessTimeUtc, data.LastWriteTimeUtc, true, PathFormat.FullPath);
                 else
-                    Directory.SetTimestampsUtc(fsi.FullName, data.CreationTimeUtc, data.LastAccessTimeUtc, data.LastWriteTimeUtc, true, PathFormat.FullPath);
-            }, err => $"Unable to set {(fsi is FileInfo ? "file" : "directory")} metadata ({err}): {fsi.FullName}");
+                    Directory.SetTimestampsUtc(info.FullName, data.CreationTimeUtc, data.LastAccessTimeUtc, data.LastWriteTimeUtc, true, PathFormat.FullPath);
+            }, err => $"Unable to set {(info is FileInfo ? "file" : "directory")} metadata ({err}): {info.FullName}");
         }
 
-        private static void Mirror(DirectoryInfo from, DirectoryInfo to, Func<string, string> getOriginalFromPath)
+        /// <summary>
+        ///     Compares paths for equality, ignoring differences in case, slash type, and trailing slash presence. Does not
+        ///     ignore differences due to relative path (non-)expansion, different Windows prefixes (/??/, //?/ etc),
+        ///     different ways to refer to the same filesystem (drive letter, junction mount point, volume ID).</summary>
+        private static bool PathsEqual(string path1, string path2)
         {
-            Console.Title = getOriginalFromPath(from.FullName);
-            bool anyChanges = false;
+            path1 = path1.Replace('/', '\\').WithSlash();
+            path2 = path2.Replace('/', '\\').WithSlash();
+            return string.Equals(path1, path2, StringComparison.OrdinalIgnoreCase);
+        }
 
-            // Enumerate files and directories
-            Dictionary<string, FileInfo> fromFiles, toFiles;
-            Dictionary<string, DirectoryInfo> fromDirs, toDirs;
+        /// <summary>
+        ///     Compares source and target directory, detects/logs changes, and updates target to match source as necessary.
+        ///     Assumes that both the source and the target exist, and that both are directories.</summary>
+        private static void SyncDir(Item src, Item tgt)
+        {
             try
             {
-                fromFiles = from.GetFiles().ToDictionary(d => d.Name);
-                toFiles = to.GetFiles().ToDictionary(d => d.Name);
-                fromDirs = from.GetDirectories().ToDictionary(d => d.Name);
-                toDirs = to.GetDirectories().ToDictionary(d => d.Name);
+                Console.Title = GetOriginalSrcPath(src.Info.FullName);
+
+                var srcItems = GetDirectoryItems(src.DirInfo);
+                var tgtItems = GetDirectoryItems(tgt.DirInfo);
+                if (srcItems == null || tgtItems == null)
+                {
+                    LogError($"Unable to mirror directory: {GetOriginalSrcPath(src.DirInfo.FullName)}");
+                    return;
+                }
+                var srcDict = srcItems.ToDictionary(t => t.Info.Name, StringComparer.OrdinalIgnoreCase);
+                var tgtDict = tgtItems.ToDictionary(t => t.Info.Name, StringComparer.OrdinalIgnoreCase);
+
+                // Completely ignore the guard file (in any directory)
+                srcDict.Remove("__HoboMirrorTarget__.txt");
+                tgtDict.Remove("__HoboMirrorTarget__.txt");
+                // Ignore paths as requested: pretend they don't exist in source, which gets them deleted in target if present
+                foreach (var srcItem in srcDict.Values.ToList())
+                    foreach (var ignore in Args.IgnorePath)
+                        if (PathsEqual(GetOriginalSrcPath(srcItem.Info.FullName), ignore))
+                        {
+                            LogAction($"Ignoring path: {GetOriginalSrcPath(srcItem.Info.FullName)}");
+                            srcDict.Remove(srcItem.Info.Name);
+                            break;
+                        }
+                // Update the item arrays to remove filtered items, and sort them into final processing order
+                srcItems = srcDict.Values.OrderBy(s => s.Type == ItemType.Dir ? 2 : 1).ThenBy(s => s.Info.Name.ToLowerInvariant()).ToArray();
+                tgtItems = tgtDict.Values.OrderBy(s => s.Type == ItemType.Dir ? 2 : 1).ThenBy(s => s.Info.Name.ToLowerInvariant()).ToArray();
+
+                // Phase 1: delete all target items which are missing in source, or are of a different item type
+                foreach (var tgtItem in tgtItems)
+                {
+                    var srcItem = srcDict.Get(tgtItem.Info.Name, null);
+                    if (srcItem != null && srcItem.Type == tgtItem.Type)
+                        continue;
+
+                    if (srcItem == null)
+                        LogChange($"Found deleted {tgtItem.TypeDesc}: ", GetOriginalSrcPath(Path.Combine(src.DirInfo.FullName, tgtItem.Info.Name)));
+                    else
+                        LogChange($"Found {srcItem.TypeDesc} which used to be a {tgtItem.TypeDesc}: ", GetOriginalSrcPath(srcItem.Info.FullName));
+                    ActDelete(tgtItem);
+                    tgtDict.Remove(tgtItem.Info.Name);
+                }
+                tgtItems = tgtDict.Values.OrderBy(s => s.Type == ItemType.Dir ? 2 : 1).ThenBy(s => s.Info.Name.ToLowerInvariant()).ToArray();
+
+                // Phase 2: sync all items that are present in both (and have matching types - which at this point is all items still present in both)
+                foreach (var srcItem in srcItems)
+                {
+                    var tgtItem = tgtDict.Get(srcItem.Info.Name, null);
+                    if (tgtItem == null)
+                        continue;
+
+                    if (srcItem.Type == ItemType.Dir && tgtItem.Type == ItemType.Dir)
+                        SyncDir(srcItem, tgtItem);
+                    else if (srcItem.Type == ItemType.File && tgtItem.Type == ItemType.File)
+                        SyncFile(srcItem, tgtItem);
+                    else if (srcItem.Type == ItemType.FileSymlink && tgtItem.Type == ItemType.FileSymlink)
+                        SyncFileSymlink(srcItem, tgtItem);
+                    else if (srcItem.Type == ItemType.DirSymlink && tgtItem.Type == ItemType.DirSymlink)
+                        SyncDirSymlink(srcItem, tgtItem);
+                    else if (srcItem.Type == ItemType.Junction && tgtItem.Type == ItemType.Junction)
+                        SyncJunction(srcItem, tgtItem);
+                    else
+                        throw new Exception("unreachable 83149");
+
+                    SetMetadata(tgtItem.Info, GetMetadata(srcItem.Info));
+                }
+
+                // Phase 3: copy all items only present in source
+                foreach (var srcItem in srcItems)
+                {
+                    if (tgtDict.ContainsKey(srcItem.Info.Name))
+                        continue;
+
+                    LogChange($"Found new {srcItem.TypeDesc}: ", GetOriginalSrcPath(srcItem.Info.FullName));
+                    var tgtFullName = Path.Combine(tgt.DirInfo.FullName, srcItem.Info.Name);
+                    if (srcItem.Type == ItemType.Dir)
+                        ActCopyDirectory(srcItem, tgtFullName);
+                    else if (srcItem.Type == ItemType.File)
+                        ActCopyOrReplaceFile(srcItem.FileInfo, tgtFullName);
+                    else if (srcItem.Type == ItemType.FileSymlink)
+                        ActCreateFileSymlink(tgtFullName, srcItem.LinkTarget);
+                    else if (srcItem.Type == ItemType.DirSymlink)
+                        ActCreateDirSymlink(tgtFullName, srcItem.LinkTarget);
+                    else if (srcItem.Type == ItemType.Junction)
+                        ActCreateJunction(tgtFullName, srcItem.LinkTarget);
+                    else
+                        throw new Exception("unreachable 49612");
+
+                    SetMetadata(CreateInfo(srcItem.Type, tgtFullName), GetMetadata(srcItem.Info));
+                }
+
+                // Update statistics
+                if (Settings != null)
+                {
+                    var path = GetOriginalSrcPath(src.Info.FullName).WithSlash();
+                    Settings.DirectoryChangeCount[path].TimesScanned++;
+                }
             }
-            catch (UnauthorizedAccessException)
+            catch (Exception e)
             {
-                LogError($"Unauthorized access: {from.FullName}");
+                // none of the above code is supposed to throw under any known circumstances
+                LogError($"Unable to sync directory ({e.Message}): {GetOriginalSrcPath(src.Info.FullName)}");
+                LogCriticalError($"SyncDir: {GetOriginalSrcPath(src.Info.FullName)}\r\n    {e.GetType().Name}: {e.Message}\r\n{e.StackTrace}");
+            }
+        }
+
+        /// <summary>
+        ///     Compares source and target file, detects/logs changes, and updates target to match source if necessary.
+        ///     Assumes that both the source and the target exist, and that both are files.</summary>
+        private static void SyncFile(Item src, Item tgt)
+        {
+            if (src.FileInfo.LastWriteTimeUtc == tgt.FileInfo.LastWriteTimeUtc && src.FileInfo.Length == tgt.FileInfo.Length)
+                return;
+            LogChange($"Found a modified file: ", GetOriginalSrcPath(src.FileInfo.FullName), whatChanged: $"\r\n    length: {tgt.FileInfo.Length:#,0} -> {src.FileInfo.Length:#,0}\r\n    modified: {tgt.FileInfo.LastWriteTimeUtc} -> {src.FileInfo.LastWriteTimeUtc} (UTC)");
+            ActCopyOrReplaceFile(src.FileInfo, tgt.FileInfo.WithName(src.FileInfo.Name));
+        }
+
+        /// <summary>
+        ///     Compares source and target file symlinks, detects/logs changes, and updates target to match source if
+        ///     necessary. Assumes that both the source and the target exist, and that both are file symlinks.</summary>
+        private static void SyncFileSymlink(Item src, Item tgt)
+        {
+            if (src.LinkTarget == tgt.LinkTarget)
+                return;
+            LogChange($"Found a modified {src.TypeDesc}: ", GetOriginalSrcPath(src.DirInfo.FullName), whatChanged: $"\r\n    target: {tgt.LinkTarget} -> {src.LinkTarget}");
+            ActDelete(tgt);
+            ActCreateFileSymlink(tgt.DirInfo.WithName(src.DirInfo.Name), src.LinkTarget);
+        }
+
+        /// <summary>
+        ///     Compares source and target directory symlinks, detects/logs changes, and updates target to match source if
+        ///     necessary. Assumes that both the source and the target exist, and that both are directory symlinks.</summary>
+        private static void SyncDirSymlink(Item src, Item tgt)
+        {
+            if (src.LinkTarget == tgt.LinkTarget)
+                return;
+            LogChange($"Found a modified {src.TypeDesc}: ", GetOriginalSrcPath(src.DirInfo.FullName), whatChanged: $"\r\n    target: {tgt.LinkTarget} -> {src.LinkTarget}");
+            ActDelete(tgt);
+            ActCreateDirSymlink(tgt.DirInfo.WithName(src.DirInfo.Name), src.LinkTarget);
+        }
+
+        /// <summary>
+        ///     Compares source and target junction, detects/logs changes, and updates target to match source if necessary.
+        ///     Assumes that both the source and the target exist, and that both are junctions.</summary>
+        private static void SyncJunction(Item src, Item tgt)
+        {
+            if (src.LinkTarget == tgt.LinkTarget)
+                return;
+            LogChange($"Found a modified {src.TypeDesc}: ", GetOriginalSrcPath(src.DirInfo.FullName), whatChanged: $"\r\n    target: {tgt.LinkTarget} -> {src.LinkTarget}");
+            ActDelete(tgt);
+            ActCreateJunction(tgt.DirInfo.WithName(src.DirInfo.Name), src.LinkTarget);
+        }
+
+        /// <summary>Deletes the specified item of any type. Assumes that the item exists.</summary>
+        private static void ActDelete(Item tgt)
+        {
+            TryCatchIo(() =>
+            {
+                if (tgt.Type == ItemType.Dir)
+                {
+                    // AlphaFS already does this, but just in case it stops doing this in a future release we do this explicitly, because the consequences of following a reparse point during a delete are dire.
+                    // Also this lets us log every action.
+                    var items = GetDirectoryItems(tgt.DirInfo);
+                    if (items == null)
+                        throw new Exception("could not enumerate directory contents");
+                    foreach (var item in items.OrderBy(t => t.Type == ItemType.Dir ? 2 : 1).ThenBy(t => t.Info.Name))
+                        ActDelete(item);
+                    TryCatchIoAction("delete empty directory", tgt.DirInfo.FullName, () =>
+                    {
+                        tgt.DirInfo.Delete(recursive: false, ignoreReadOnly: true);
+                    });
+                }
+                else
+                {
+                    LogAction($"Delete {tgt.TypeDesc}: {tgt.Info.FullName}");
+                    if (tgt.Type == ItemType.File || tgt.Type == ItemType.FileSymlink)
+                        tgt.FileInfo.Delete(ignoreReadOnly: true);
+                    else if (tgt.Type == ItemType.DirSymlink || tgt.Type == ItemType.Junction)
+                        tgt.DirInfo.Delete(recursive: false, ignoreReadOnly: true);
+                    else
+                        throw new Exception("unreachable 14234");
+                }
+            }, err => $"Unable to delete {tgt.TypeDesc} ({err}): {tgt.Info.FullName}");
+        }
+
+        /// <summary>Creates the specified directory. Assumes that it doesn't exist.</summary>
+        private static void ActCreateDirectory(string fullName)
+        {
+            TryCatchIoAction("create directory", fullName, () =>
+            {
+                Directory.CreateDirectory(fullName);
+            });
+        }
+
+        /// <summary>Creates the specified file symlink. Assumes that it doesn't exist.</summary>
+        private static void ActCreateFileSymlink(string fullName, string linkTarget)
+        {
+            TryCatchIoAction("create file-symlink", fullName, () =>
+            {
+                File.CreateSymbolicLink(fullName, linkTarget.StartsWith(@"\??\Volume") ? (@"\\?\" + linkTarget.Substring(4)) : linkTarget);
+            });
+        }
+
+        /// <summary>Creates the specified directory symlink. Assumes that it doesn't exist.</summary>
+        private static void ActCreateDirSymlink(string fullName, string linkTarget)
+        {
+            TryCatchIoAction("create directory-symlink", fullName, () =>
+            {
+                Directory.CreateSymbolicLink(fullName, linkTarget.StartsWith(@"\??\Volume") ? (@"\\?\" + linkTarget.Substring(4)) : linkTarget);
+            });
+        }
+
+        /// <summary>Creates the specified junction. Assumes that it doesn't exist.</summary>
+        private static void ActCreateJunction(string fullName, string linkTarget)
+        {
+            TryCatchIoAction("create junction", fullName, () =>
+            {
+                Directory.CreateDirectory(fullName);
+                JunctionPoint.Create(fullName, linkTarget);
+            });
+        }
+
+        /// <summary>Copies a directory to the specified target path. Assumes that the target path does not exist.</summary>
+        private static void ActCopyDirectory(Item srcItem, string tgtFullName)
+        {
+            ActCreateDirectory(tgtFullName);
+            var tgtItem = CreateItem(new DirectoryInfo(tgtFullName));
+            if (tgtItem == null)
+            {
+                LogError($"Unable to copy directory: {GetOriginalSrcPath(srcItem.DirInfo.FullName)}");
                 return;
             }
-
-            // Ignore paths as requested
-            foreach (var fromDir in fromDirs.Values.ToList())
-                foreach (var ignore in Args.IgnorePath)
-                    if (getOriginalFromPath(fromDir.FullName).WithSlash().EqualsNoCase(ignore))
-                    {
-                        LogAction($"Ignoring directory: {getOriginalFromPath(fromDir.FullName)}");
-                        fromDirs.Remove(fromDir.Name);
-                        break;
-                    }
-            // Completely ignore the guard file (in any directory)
-            fromFiles.RemoveAllByValue(f => f.Name == "__HoboMirrorTarget__.txt");
-            toFiles.RemoveAllByValue(f => f.Name == "__HoboMirrorTarget__.txt");
-
-            // Delete mirrored files missing in source
-            foreach (var toFile in toFiles.Values.Where(toFile => !fromFiles.ContainsKey(toFile.Name)))
-            {
-                LogChange("Found deleted file: ", getOriginalFromPath(Path.Combine(from.FullName, toFile.Name)));
-                anyChanges = true;
-                DeleteFile(toFile);
-            }
-
-            // Delete mirrored directories missing in source
-            foreach (var toDir in toDirs.Values.Where(toDir => !fromDirs.ContainsKey(toDir.Name)))
-            {
-                LogChange("Found deleted directory: ", getOriginalFromPath(Path.Combine(from.FullName, toDir.Name)));
-                anyChanges = true;
-                DeleteDirectory(toDir);
-            }
-
-            // Copy / update all files from source
-            foreach (var fromFile in fromFiles.Values)
-            {
-                TryCatchIo(() =>
-                {
-                    var toFile = toFiles.Get(fromFile.Name, null);
-                    bool notNew = false;
-
-                    // For existing files, check if the file contents are out of date
-                    if (toFile != null)
-                    {
-                        if (fromFile.LastWriteTimeUtc != toFile.LastWriteTimeUtc || fromFile.Length != toFile.Length || fromFile.IsReparsePoint() != toFile.IsReparsePoint())
-                        {
-#warning TODO: if it was already a reparse point with a different target, this check will miss it, because changing the target does not change last write time
-                            if (fromFile.IsReparsePoint() == toFile.IsReparsePoint())
-                            {
-                                LogChange("Found modified file: ", getOriginalFromPath(fromFile.FullName));
-                                LogDebug($"Modified file: {getOriginalFromPath(fromFile.FullName)}");
-                                LogDebug($"    Last write time: source={fromFile.LastWriteTimeUtc.ToIsoStringRoundtrip()}, target={toFile.LastWriteTimeUtc.ToIsoStringRoundtrip()}");
-                                LogDebug($"    Length: source={fromFile.Length:#,0}, target={toFile.Length:#,0}");
-                            }
-                            else if (fromFile.IsReparsePoint())
-                                LogChange("Found file symlink which used to be a file: ", getOriginalFromPath(fromFile.FullName));
-                            else
-                                LogChange("Found file which used to be a file symlink: ", getOriginalFromPath(fromFile.FullName));
-                            anyChanges = true;
-                            notNew = true;
-                            toFile = null;
-                        }
-                    }
-
-                    // Copy the file if required
-                    if (toFile == null)
-                    {
-                        if (!notNew)
-                            LogChange("Found new file: ", getOriginalFromPath(fromFile.FullName));
-                        anyChanges = true;
-                        var destPath = Path.Combine(to.FullName, fromFile.Name);
-                        var destTemp = Path.Combine(to.FullName, $"~HoboMirror-{Rnd.GenerateString(16)}.tmp");
-                        var res = TryCatchIo(() => new FileInfo(fromFile.FullName).CopyTo(destTemp, CopyOptions.CopySymbolicLink, CopyProgress, null), err => $"Unable to copy file ({err}): {getOriginalFromPath(fromFile.FullName)}");
-#warning TODO: this does not distinguish critical and non-critical errors
-                        if (res == null)
-                        { /* nothing - we've already logged the error */ }
-                        else if (res.ErrorCode != 0)
-                            LogError($"Unable to copy file ({res.ErrorMessage}): {getOriginalFromPath(fromFile.FullName)}");
-                        else
-                        {
-                            if (notNew)
-                            {
-                                var delFile = new FileInfo(destPath);
-                                try
-                                {
-                                    delFile.Delete(ignoreReadOnly: true);
-                                }
-                                catch (UnauthorizedAccessException)
-                                {
-                                    LogError($"Unable to delete (for copy) {(delFile.IsReparsePoint() ? "file reparse point" : "file")} (unauthorized access): {delFile.FullName}");
-                                }
-                            }
-                            File.Move(destTemp, destPath, MoveOptions.None);
-                            toFile = new FileInfo(destPath);
-                            LogAction($"Copy file: {destPath}\r\n   from: {getOriginalFromPath(fromFile.FullName)}");
-                        }
-                    }
-
-                    // Update attributes
-                    if (toFile != null)
-                        SetMetadata(toFile, GetMetadata(fromFile));
-                }, err => $"Unable to mirror file ({err}): {getOriginalFromPath(fromFile.FullName)}");
-            }
-
-            // Process source directories that are reparse points
-            foreach (var fromDir in fromDirs.Values.Where(fromDir => fromDir.IsReparsePoint()))
-            {
-                // Target might not exist, might be a matching reparse point, a non-matching reparse point, or a full-blown directory. Reparse points can be junctions, symlinks, or an unsupported type
-                TryCatchIo(() =>
-                {
-                    bool needCreate = true;
-                    var src = GetLinkInfo(fromDir);
-                    var toDir = toDirs.Get(fromDir.Name, null);
-                    if (toDir == null)
-                    {
-                        LogChange($"Found new {src.EntryType}: ", getOriginalFromPath(fromDir.FullName));
-                    }
-                    else
-                    {
-                        // Target path exists. It could still be a directory, a junction, a symlink or an unsupported type.
-                        var tgt = GetLinkInfo(toDir); // could be null if it's just a normal directory
-                        if (tgt != null && tgt.EntryType == src.EntryType && tgt.LinkTarget == src.LinkTarget)
-                        {
-                            // it's a junction or a directory symlink, and is identical to the source
-                            needCreate = false;
-                        }
-                        else
-                        {
-                            // it's a directory, or is of the wrong type, or points to the wrong target
-                            if (tgt == null)
-                                LogChange($"Found {src.EntryType} which used to be a directory: ", getOriginalFromPath(fromDir.FullName));
-                            else if (tgt.EntryType != src.EntryType)
-                                LogChange($"Found {src.EntryType} which used to be a {tgt.EntryType}: ", getOriginalFromPath(fromDir.FullName));
-                            else
-                                LogChange($"Found modified {src.EntryType}: ", getOriginalFromPath(fromDir.FullName));
-                            DeleteDirectory(toDir);
-                        }
-                    }
-
-                    if (needCreate)
-                    {
-                        var destPath = Path.Combine(to.FullName, fromDir.Name);
-
-                        LogAction($"Create {src.EntryType} for {getOriginalFromPath(fromDir.FullName)}\r\n   at {destPath}\r\n   linked to {src.LinkTarget}");
-                        if (src.EntryType == EntryType.Junction)
-                            JunctionPoint.Create(destPath, src.LinkTarget, false);
-                        else
-                            File.CreateSymbolicLink(destPath, src.LinkTarget.StartsWith(@"\??\Volume") ? (@"\\?\" + src.LinkTarget.Substring(4)) : src.LinkTarget);
-                        toDir = new DirectoryInfo(destPath);
-                    }
-
-                    // Copy attributes
-                    SetMetadata(toDir, GetMetadata(fromDir));
-                }, err => $"Unable to mirror reparse point ({err}): {getOriginalFromPath(fromDir.FullName)}");
-            }
-
-            // Process source directories which are not reparse points
-            foreach (var fromDir in fromDirs.Values.Where(fromDir => !fromDir.IsReparsePoint()))
-            {
-                var toDir = toDirs.Get(fromDir.Name, null);
-                bool notNew = false;
-
-                // If target dir exists and is a reparse point, delete it
-                if (toDir != null && toDir.IsReparsePoint())
-                {
-                    LogChange("Found directory which used to be a reparse point: ", getOriginalFromPath(fromDir.FullName));
-                    anyChanges = true;
-                    DeleteDirectory(toDir);
-                    toDir = null;
-                    notNew = true;
-                }
-
-                // If target dir does not exist, create it
-                if (toDir == null)
-                {
-                    if (!notNew)
-                        LogChange("Found new directory: ", getOriginalFromPath(fromDir.FullName));
-                    anyChanges = true;
-                    toDir = new DirectoryInfo(Path.Combine(to.FullName, fromDir.Name));
-                    CreateDirectory(toDir.FullName);
-                }
-
-                // Recurse!
-                Mirror(fromDir, toDir, getOriginalFromPath);
-
-                // Update attributes
-                SetMetadata(toDir, GetMetadata(fromDir));
-            }
-
-            // Update statistics
-            if (Settings != null)
-            {
-                var path = getOriginalFromPath(from.FullName).WithSlash();
-                Settings.DirectoryChangeCount[path].TimesScanned++;
-                if (anyChanges)
-                    Settings.DirectoryChangeCount[path].TimesChanged++;
-            }
+            SyncDir(srcItem, tgtItem);
         }
 
-        class LinkInfo
+        /// <summary>
+        ///     Copies a file to the specified path. Always copies to a temporary file in the target directory first, followed
+        ///     by a rename, to avoid errors leaving a half finished file looking like the real thing. Unlike other "act"
+        ///     methods, this method allows the target file to already exist, and will replace it on successful copy.</summary>
+        private static void ActCopyOrReplaceFile(FileInfo src, string tgtFullName)
         {
-            public EntryType EntryType;
-            public string LinkTarget; // null if not a symlink or a junction
+            var tgtTemp = Path.Combine(Path.GetDirectoryName(tgtFullName), $"~HoboMirror-{Rnd.GenerateString(16)}.tmp");
+
+            bool success = TryCatchIoAction("copy file", GetOriginalSrcPath(src.FullName), () =>
+            {
+                // This must not directly call src.CopyTo because AlphaFS will modify the instance and make it point to the new file...
+                var res = new FileInfo(src.FullName).CopyTo(tgtTemp, CopyOptions.FailIfExists, CopyProgress, null);
+                if (res.ErrorCode != 0)
+                    throw new Exception(res.ErrorMessage);
+                return true;
+            });
+            if (!success)
+                return;
+
+            success = TryCatchIo(() =>
+            {
+                if (File.Exists(tgtFullName))
+                {
+                    LogAction($"Delete old version of this file: {tgtFullName}");
+                    new FileInfo(tgtFullName).Delete(ignoreReadOnly: true);
+                }
+                return true;
+            }, err => $"Unable to delete old version of this file ({err}): {tgtFullName}");
+            if (!success)
+                return;
+
+            TryCatchIo(() =>
+            {
+                File.Move(tgtTemp, tgtFullName, MoveOptions.None);
+            }, err => $"Unable to rename temp copied file to final destination ({err}): {tgtFullName}");
         }
-        enum EntryType { Symlink, Junction, UnknownReparsePoint }
-        private static LinkInfo GetLinkInfo(FileSystemInfo fsi)
+
+        /// <summary>
+        ///     Safely enumerates the contents of a directory. If completely unable to enumerate, logs the error as
+        ///     appropriate and returns null (which the caller is expected to handle by skipping whatever they were going to
+        ///     do with this list). If able to enumerate, will safely obtain additional info about every entry, skipping those
+        ///     that fail and logging errors as appropriate.</summary>
+        private static Item[] GetDirectoryItems(DirectoryInfo dir)
         {
-            if (!fsi.IsReparsePoint())
+            var infos = TryCatchIo(() => dir.GetFileSystemInfos(), err => $"Unable to list directory ({err}): {dir.FullName}");
+            if (infos == null)
                 return null;
-            if (JunctionPoint.Exists(fsi.FullName))
-                return new LinkInfo { EntryType = EntryType.Junction, LinkTarget = JunctionPoint.GetTarget(fsi.FullName) };
-            try { return new LinkInfo { EntryType = EntryType.Symlink, LinkTarget = File.GetLinkTargetInfo(fsi.FullName).PrintName }; }
-            catch { return new LinkInfo { EntryType = EntryType.UnknownReparsePoint, LinkTarget = null }; }
+            return infos.Select(info => CreateItem(info)).Where(r => r != null).ToArray();
         }
 
-        static DateTime lastProgress;
-        static CopyMoveProgressResult CopyProgress(long totalFileSize, long totalBytesTransferred, long streamSize, long streamBytesTransferred, int streamNumber, CopyMoveProgressCallbackReason callbackReason, object userData)
+        /// <summary>
+        ///     Determines what type of item this filesystem entry is, while handling any potential errors. On failure, logs
+        ///     an appropriate message and returns null (which the caller is expected to handle by skipping whatever they were
+        ///     going to do with this item).</summary>
+        /// <remarks>
+        ///     Note that instantiating a <see cref="FileInfo"/> or <see cref="DirectoryInfo"/> is safe and will not throw, so
+        ///     only this step needs to be wrapped in an error handler.</remarks>
+        private static Item CreateItem(FileSystemInfo info)
+        {
+            return TryCatchIo(() => new Item(info), err => $"Unable to determine filesystem entry type ({err}): {info.FullName}");
+        }
+
+        /// <summary>Instantiates a file system info of the appropriate type based on item type.</summary>
+        private static FileSystemInfo CreateInfo(ItemType type, string fullPath)
+        {
+            if (type == ItemType.Dir || type == ItemType.DirSymlink || type == ItemType.Junction)
+                return new DirectoryInfo(fullPath);
+            else if (type == ItemType.File || type == ItemType.FileSymlink)
+                return new FileInfo(fullPath);
+            else
+                throw new Exception("unreachable 52210");
+        }
+
+        private static DateTime lastProgress;
+        private static CopyMoveProgressResult CopyProgress(long totalFileSize, long totalBytesTransferred, long streamSize, long streamBytesTransferred, int streamNumber, CopyMoveProgressCallbackReason callbackReason, object userData)
         {
             if (lastProgress < DateTime.UtcNow - TimeSpan.FromMilliseconds(100))
             {
@@ -650,7 +719,43 @@ namespace HoboMirror
             }
             return CopyMoveProgressResult.Continue;
         }
+    }
 
+    enum ItemType { File, Dir, FileSymlink, DirSymlink, Junction }
+
+    class Item
+    {
+        public FileSystemInfo Info { get; private set; }
+        public FileInfo FileInfo => (FileInfo) Info;
+        public DirectoryInfo DirInfo => (DirectoryInfo) Info;
+        public ItemType Type { get; private set; }
+        public string LinkTarget { get; private set; } // null if not a symlink or a junction
+        public string TypeDesc => Type == ItemType.Dir ? "directory" : Type == ItemType.DirSymlink ? "directory-symlink" : Type == ItemType.File ? "file" : Type == ItemType.FileSymlink ? "file-symlink" : Type == ItemType.Junction ? "directory-junction" : throw new Exception("unreachable 63161");
+        public override string ToString() => $"{TypeDesc}: {Info.FullName}{(LinkTarget == null ? "" : (" -> " + LinkTarget))}";
+
+        public Item(FileSystemInfo info)
+        {
+            Info = info;
+            if (info.IsReparsePoint())
+            {
+                if (JunctionPoint.Exists(info.FullName))
+                {
+                    Type = ItemType.Junction;
+                    LinkTarget = JunctionPoint.GetTarget(info.FullName);
+                }
+                else
+                {
+                    Type = info is FileInfo ? ItemType.FileSymlink : info is DirectoryInfo ? ItemType.DirSymlink : throw new Exception("unreachable 27117");
+                    LinkTarget = File.GetLinkTargetInfo(info.FullName).PrintName; // this should throw for reparse points of unknown types (ie neither junction nor symlink)
+                }
+            }
+            else if (info is FileInfo)
+                Type = ItemType.File;
+            else if (info is DirectoryInfo)
+                Type = ItemType.Dir;
+            else
+                throw new Exception("unreachable 61374");
+        }
     }
 
     class FileSystemInfoMetadata

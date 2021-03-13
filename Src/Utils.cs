@@ -14,5 +14,15 @@ namespace HoboMirror
         {
             return path.EndsWith("\\") ? path : (path + "\\");
         }
+
+        public static string ParentFullName(this FileSystemInfo fsi)
+        {
+            return Path.GetDirectoryName(fsi.FullName);
+        }
+
+        public static string WithName(this FileSystemInfo fsi, string name)
+        {
+            return Path.Combine(fsi.ParentFullName(), name);
+        }
     }
 }

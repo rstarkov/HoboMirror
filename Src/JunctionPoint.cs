@@ -187,32 +187,12 @@ namespace HoboMirror
             EFileAttributes dwFlagsAndAttributes,
             IntPtr hTemplateFile);
 
-        /// <summary>
-        /// Creates a junction point from the specified directory to the specified target directory.
-        /// </summary>
-        /// <remarks>
-        /// Only works on NTFS.
-        /// </remarks>
-        /// <param name="junctionPoint">The junction point path</param>
-        /// <param name="targetDir">The target directory</param>
-        /// <param name="overwrite">If true overwrites an existing reparse point or empty directory</param>
-        /// <exception cref="IOException">Thrown when the junction point could not be created or when
-        /// an existing directory was found and <paramref name="overwrite" /> if false</exception>
-        public static void Create(string junctionPoint, string targetDir, bool overwrite)
+        public static void Create(string junctionPoint, string targetDir)
         {
-            targetDir = Path.GetFullPath(targetDir);
-            if (!targetDir.StartsWith(NonInterpretedPathPrefix))
-                targetDir = NonInterpretedPathPrefix + targetDir;
-
-            if (Directory.Exists(junctionPoint))
-            {
-                if (!overwrite)
-                    throw new System.IO.IOException("Directory already exists and overwrite parameter is false.");
-            }
-            else
-            {
-                Directory.CreateDirectory(junctionPoint);
-            }
+            if (targetDir.StartsWith(@"\\?\Volume{"))
+                targetDir = @"\??\" + targetDir.Substring(4);
+            else if (!targetDir.StartsWith(@"\??\"))
+                targetDir = @"\??\" + targetDir;
 
             using (SafeFileHandle handle = OpenReparsePoint(junctionPoint, EFileAccess.GenericWrite))
             {
@@ -375,8 +355,10 @@ namespace HoboMirror
                 string targetDir = Encoding.Unicode.GetString(reparseDataBuffer.PathBuffer,
                     reparseDataBuffer.SubstituteNameOffset, reparseDataBuffer.SubstituteNameLength);
 
-                if (targetDir.StartsWith(NonInterpretedPathPrefix))
-                    targetDir = targetDir.Substring(NonInterpretedPathPrefix.Length);
+                if (targetDir.StartsWith(@"\??\Volume{"))
+                    targetDir = @"\\?\" + targetDir.Substring(4);
+                else if (targetDir.StartsWith(@"\??\"))
+                    targetDir = targetDir.Substring(4);
 
                 return targetDir;
             }
