@@ -156,9 +156,9 @@ namespace HoboMirror
                         GetOriginalSrcPath = str => str.Replace(vscVolumes[task.FromVolume].SnapshotPath, task.FromVolume).Replace(@"\\", @"\");
                         if (!Directory.Exists(task.ToPath))
                             ActCreateDirectory(task.ToPath);
-                        var srcItem = CreateItem(new DirectoryInfo(Path.Combine(vscVolumes[task.FromVolume].SnapshotPath, task.FromPath.Substring(task.FromVolume.Length))));
+                        var srcItem = new Item(new DirectoryInfo(Path.Combine(vscVolumes[task.FromVolume].SnapshotPath, task.FromPath.Substring(task.FromVolume.Length))), ItemType.Dir);
                         var tgtItem = CreateItem(new DirectoryInfo(task.ToPath));
-                        if (srcItem != null && tgtItem != null)
+                        if (tgtItem != null)
                             SyncDir(srcItem, tgtItem);
                         else
                             LogError($"Unable to execute mirror task: {task.FromPath}");
@@ -755,6 +755,15 @@ namespace HoboMirror
                 Type = ItemType.Dir;
             else
                 throw new Exception("unreachable 61374");
+        }
+
+        /// <summary>
+        ///     Helps create an instance for the shadow copy of the root of a volume, which presents as a reparse point but
+        ///     must be treated like a directory.</summary>
+        public Item(FileSystemInfo info, ItemType type)
+        {
+            Info = info;
+            Type = type;
         }
     }
 
