@@ -426,6 +426,7 @@ namespace HoboMirror
                 srcItems = srcDict.Values.OrderBy(s => s.Type == ItemType.Dir ? 2 : 1).ThenBy(s => s.Info.Name.ToLowerInvariant()).ToArray();
                 tgtItems = tgtDict.Values.OrderBy(s => s.Type == ItemType.Dir ? 2 : 1).ThenBy(s => s.Info.Name.ToLowerInvariant()).ToArray();
 
+                Console.Title = GetOriginalSrcPath(src.DirInfo.FullName) + " (directory ACL)";
                 CopyAccessControl(src, tgt); // this potentially modifies sub-items, so we must do it before syncing the sub-items
 
                 // Phase 1: delete all target items which are missing in source, or are of a different item type
@@ -434,7 +435,7 @@ namespace HoboMirror
                     var srcItem = srcDict.Get(tgtItem.Info.Name, null);
                     if (srcItem != null && srcItem.Type == tgtItem.Type)
                         continue;
-                    Console.Title = "Delete: " + GetOriginalSrcPath(src.DirInfo.WithName(tgtItem.Info.Name));
+                    Console.Title = GetOriginalSrcPath(src.DirInfo.FullNameWithName(tgtItem.Info.Name)) + " (delete)";
 
                     if (srcItem == null)
                         LogChange($"Found deleted {tgtItem.TypeDesc}: ", GetOriginalSrcPath(Path.Combine(src.DirInfo.FullName, tgtItem.Info.Name)));
@@ -451,7 +452,7 @@ namespace HoboMirror
                     var tgtItem = tgtDict.Get(srcItem.Info.Name, null);
                     if (tgtItem == null)
                         continue;
-                    Console.Title = "Sync: " + GetOriginalSrcPath(srcItem.Info.FullName);
+                    Console.Title = GetOriginalSrcPath(srcItem.Info.FullName) + " (sync)";
 
                     if (srcItem.Type == ItemType.Dir && tgtItem.Type == ItemType.Dir)
                         SyncDir(srcItem, tgtItem);
@@ -472,7 +473,7 @@ namespace HoboMirror
                 {
                     if (tgtDict.ContainsKey(srcItem.Info.Name))
                         continue;
-                    Console.Title = "Copy: " + GetOriginalSrcPath(srcItem.Info.FullName);
+                    Console.Title = GetOriginalSrcPath(srcItem.Info.FullName) + " (copy)";
 
                     LogChange($"Found new {srcItem.TypeDesc}: ", GetOriginalSrcPath(srcItem.Info.FullName));
                     var tgtFullName = Path.Combine(tgt.DirInfo.FullName, srcItem.Info.Name);
@@ -500,7 +501,7 @@ namespace HoboMirror
                     var tgtItem = tgtDict.Get(srcItem.Info.Name, null);
                     if (tgtItem == null)
                         continue;
-                    Console.Title = "Attributes: " + GetOriginalSrcPath(srcItem.Info.FullName);
+                    Console.Title = GetOriginalSrcPath(srcItem.Info.FullName) + " (attributes)";
 
                     if (srcItem.Type != ItemType.Dir) // directories are handled by Copy* calls just before and just after these 4 phases
                     {
@@ -533,7 +534,7 @@ namespace HoboMirror
             if (src.FileInfo.LastWriteTimeUtc == tgt.FileInfo.LastWriteTimeUtc && src.FileInfo.Length == tgt.FileInfo.Length)
                 return;
             LogChange($"Found a modified file: ", GetOriginalSrcPath(src.FileInfo.FullName), whatChanged: $"\r\n    length: {tgt.FileInfo.Length:#,0} -> {src.FileInfo.Length:#,0}\r\n    modified: {tgt.FileInfo.LastWriteTimeUtc} -> {src.FileInfo.LastWriteTimeUtc} (UTC)");
-            ActCopyOrReplaceFile(src.FileInfo, tgt.FileInfo.WithName(src.FileInfo.Name));
+            ActCopyOrReplaceFile(src.FileInfo, tgt.FileInfo.FullNameWithName(src.FileInfo.Name));
         }
 
         /// <summary>
@@ -545,7 +546,7 @@ namespace HoboMirror
                 return;
             LogChange($"Found a modified {src.TypeDesc}: ", GetOriginalSrcPath(src.DirInfo.FullName), whatChanged: $"\r\n    target: {tgt.LinkTarget} -> {src.LinkTarget}");
             ActDelete(tgt);
-            ActCreateFileSymlink(tgt.DirInfo.WithName(src.DirInfo.Name), src.LinkTarget);
+            ActCreateFileSymlink(tgt.DirInfo.FullNameWithName(src.DirInfo.Name), src.LinkTarget);
         }
 
         /// <summary>
@@ -557,7 +558,7 @@ namespace HoboMirror
                 return;
             LogChange($"Found a modified {src.TypeDesc}: ", GetOriginalSrcPath(src.DirInfo.FullName), whatChanged: $"\r\n    target: {tgt.LinkTarget} -> {src.LinkTarget}");
             ActDelete(tgt);
-            ActCreateDirSymlink(tgt.DirInfo.WithName(src.DirInfo.Name), src.LinkTarget);
+            ActCreateDirSymlink(tgt.DirInfo.FullNameWithName(src.DirInfo.Name), src.LinkTarget);
         }
 
         /// <summary>
@@ -569,7 +570,7 @@ namespace HoboMirror
                 return;
             LogChange($"Found a modified {src.TypeDesc}: ", GetOriginalSrcPath(src.DirInfo.FullName), whatChanged: $"\r\n    target: {tgt.LinkTarget} -> {src.LinkTarget}\r\n    print name: {tgt.PrintName} -> {src.PrintName}");
             ActDelete(tgt);
-            ActCreateJunction(tgt.DirInfo.WithName(src.DirInfo.Name), src.LinkTarget, src.PrintName);
+            ActCreateJunction(tgt.DirInfo.FullNameWithName(src.DirInfo.Name), src.LinkTarget, src.PrintName);
         }
 
         /// <summary>Deletes the specified item of any type. Assumes that the item exists.</summary>

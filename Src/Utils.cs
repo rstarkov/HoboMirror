@@ -20,7 +20,7 @@ namespace HoboMirror
             return Path.GetDirectoryName(fsi.FullName);
         }
 
-        public static string WithName(this FileSystemInfo fsi, string name)
+        public static string FullNameWithName(this FileSystemInfo fsi, string name)
         {
             return Path.Combine(fsi.ParentFullName(), name);
         }
