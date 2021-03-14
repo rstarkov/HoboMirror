@@ -326,63 +326,60 @@ namespace HoboMirror
             return default;
         }
 
-        private static FileSystemInfoMetadata GetMetadata(FileSystemInfo info)
+        private static void CopyAccessControl(Item src, Item tgt)
         {
-#warning TODO: if the source is a reparse point, this copies timestamps from the linked file instead. If source points to non-existent file, it fails
-            if (!UpdateMetadata)
-                return null;
-            return TryCatchIo(() =>
-            {
-                var result = new FileSystemInfoMetadata();
-                if (RefreshAccessControl)
-                {
-                    if (info is FileInfo)
-                        result.FileSecurity = (info as FileInfo).GetAccessControl();
-                    else
-                        result.DirectorySecurity = (info as DirectoryInfo).GetAccessControl();
-                }
-                result.Attributes = info.Attributes;
-                result.CreationTimeUtc = info.CreationTimeUtc;
-                result.LastWriteTimeUtc = info.LastWriteTimeUtc;
-                result.LastAccessTimeUtc = info.LastAccessTimeUtc;
-                if (result.CreationTimeUtc.Year == 1601 && result.CreationTimeUtc.Month == 1 && result.CreationTimeUtc.Day == 1)
-                    throw new Exception("unknown error, invalid timestamp"); // currently this happens silently when getting the metadata of an invalid symlink
-                return result;
-            }, err => $"Unable to get {(info is FileInfo ? "file" : "directory")} metadata ({err}): {info.FullName}");
-        }
-
-        private static void SetMetadata(FileSystemInfo info, FileSystemInfoMetadata data)
-        {
-            if (!UpdateMetadata)
+            if (!RefreshAccessControl)
                 return;
-            if (data == null)
-            {
-                LogError($"Unable to set {(info is FileInfo ? "file" : "directory")} metadata (source metadata not available): {info.FullName}");
-                return;
-            }
 
-            if (RefreshAccessControl)
+            var acl = TryCatchIo(() =>
             {
-                var ok = TryCatchIo(() =>
-                {
-                    if (info is FileInfo)
-                        (info as FileInfo).SetAccessControl(data.FileSecurity);
-                    else
-                        (info as DirectoryInfo).SetAccessControl(data.DirectorySecurity);
-                    return true;
-                }, err => $"Unable to set {(info is FileInfo ? "file" : "directory")} security parameters ({err}): {info.FullName}");
-                if (!ok)
-                    return;
-            }
+                if (src.Info is FileInfo)
+                    return (FileSystemSecurity) (src.Info as FileInfo).GetAccessControl();
+                else
+                    return (src.Info as DirectoryInfo).GetAccessControl();
+            }, err => $"Unable to get {src.TypeDesc} access control ({err}): {GetOriginalSrcPath(src.Info.FullName)}");
+            if (acl == null)
+                return;
 
             TryCatchIo(() =>
             {
-                info.Attributes = data.Attributes;
-                if (info is FileInfo)
-                    File.SetTimestampsUtc(info.FullName, data.CreationTimeUtc, data.LastAccessTimeUtc, data.LastWriteTimeUtc, true, PathFormat.FullPath);
+                if (tgt.Info is FileInfo)
+                    (tgt.Info as FileInfo).SetAccessControl((FileSecurity) acl);
                 else
-                    Directory.SetTimestampsUtc(info.FullName, data.CreationTimeUtc, data.LastAccessTimeUtc, data.LastWriteTimeUtc, true, PathFormat.FullPath);
-            }, err => $"Unable to set {(info is FileInfo ? "file" : "directory")} metadata ({err}): {info.FullName}");
+                    (tgt.Info as DirectoryInfo).SetAccessControl((DirectorySecurity) acl);
+            }, err => $"Unable to set {tgt.TypeDesc} access control ({err}): {tgt.Info.FullName}");
+        }
+
+        private static void CopyAttributes(Item src, Item tgt)
+        {
+#warning TODO: if the source is a reparse point, this copies timestamps from the linked file instead. If source points to non-existent file, it fails
+            if (!UpdateMetadata)
+                return;
+
+            IO.FileAttributes attrs = default;
+            DateTime creation = default, write = default, access = default;
+            var ok = TryCatchIo(() =>
+            {
+                attrs = src.Info.Attributes;
+                creation = src.Info.CreationTimeUtc;
+                write = src.Info.LastWriteTimeUtc;
+                access = src.Info.LastAccessTimeUtc;
+                if (creation.Year == 1601 && creation.Month == 1 && creation.Day == 1)
+                    throw new Exception("unknown error, invalid timestamp"); // currently this happens silently when getting the metadata of an invalid symlink
+                return true;
+            }, err => $"Unable to get {src.TypeDesc} filesystem attributes ({err}): {GetOriginalSrcPath(src.Info.FullName)}");
+            if (!ok)
+                return;
+
+            TryCatchIo(() =>
+            {
+                if (tgt.Info is FileInfo)
+                    File.SetTimestampsUtc(tgt.Info.FullName, creation, access, write, true, PathFormat.FullPath);
+                else
+                    Directory.SetTimestampsUtc(tgt.Info.FullName, creation, access, write, true, PathFormat.FullPath);
+                tgt.Info.Refresh(); // "archive" attribute may have been changed
+                tgt.Info.Attributes = attrs;
+            }, err => $"Unable to set {tgt.TypeDesc} attributes ({err}): {tgt.Info.FullName}");
         }
 
         /// <summary>
@@ -403,8 +400,6 @@ namespace HoboMirror
         {
             try
             {
-                Console.Title = GetOriginalSrcPath(src.Info.FullName);
-
                 var srcItems = GetDirectoryItems(src.DirInfo);
                 var tgtItems = GetDirectoryItems(tgt.DirInfo);
                 if (srcItems == null || tgtItems == null)
@@ -431,12 +426,15 @@ namespace HoboMirror
                 srcItems = srcDict.Values.OrderBy(s => s.Type == ItemType.Dir ? 2 : 1).ThenBy(s => s.Info.Name.ToLowerInvariant()).ToArray();
                 tgtItems = tgtDict.Values.OrderBy(s => s.Type == ItemType.Dir ? 2 : 1).ThenBy(s => s.Info.Name.ToLowerInvariant()).ToArray();
 
+                CopyAccessControl(src, tgt); // this potentially modifies sub-items, so we must do it before syncing the sub-items
+
                 // Phase 1: delete all target items which are missing in source, or are of a different item type
                 foreach (var tgtItem in tgtItems)
                 {
                     var srcItem = srcDict.Get(tgtItem.Info.Name, null);
                     if (srcItem != null && srcItem.Type == tgtItem.Type)
                         continue;
+                    Console.Title = "Delete: " + GetOriginalSrcPath(src.DirInfo.WithName(tgtItem.Info.Name));
 
                     if (srcItem == null)
                         LogChange($"Found deleted {tgtItem.TypeDesc}: ", GetOriginalSrcPath(Path.Combine(src.DirInfo.FullName, tgtItem.Info.Name)));
@@ -453,6 +451,7 @@ namespace HoboMirror
                     var tgtItem = tgtDict.Get(srcItem.Info.Name, null);
                     if (tgtItem == null)
                         continue;
+                    Console.Title = "Sync: " + GetOriginalSrcPath(srcItem.Info.FullName);
 
                     if (srcItem.Type == ItemType.Dir && tgtItem.Type == ItemType.Dir)
                         SyncDir(srcItem, tgtItem);
@@ -466,8 +465,6 @@ namespace HoboMirror
                         SyncJunction(srcItem, tgtItem);
                     else
                         throw new Exception("unreachable 83149");
-
-                    SetMetadata(tgtItem.Info, GetMetadata(srcItem.Info));
                 }
 
                 // Phase 3: copy all items only present in source
@@ -475,6 +472,7 @@ namespace HoboMirror
                 {
                     if (tgtDict.ContainsKey(srcItem.Info.Name))
                         continue;
+                    Console.Title = "Copy: " + GetOriginalSrcPath(srcItem.Info.FullName);
 
                     LogChange($"Found new {srcItem.TypeDesc}: ", GetOriginalSrcPath(srcItem.Info.FullName));
                     var tgtFullName = Path.Combine(tgt.DirInfo.FullName, srcItem.Info.Name);
@@ -490,9 +488,27 @@ namespace HoboMirror
                         ActCreateJunction(tgtFullName, srcItem.LinkTarget, srcItem.PrintName);
                     else
                         throw new Exception("unreachable 49612");
-
-                    SetMetadata(CreateInfo(srcItem.Type, tgtFullName), GetMetadata(srcItem.Info));
+                    var tgtItem = CreateItem(CreateInfo(srcItem.Type, tgtFullName));
+                    if (tgtItem != null)
+                        tgtDict.Add(tgtItem.Info.Name, tgtItem);
                 }
+                tgtItems = tgtDict.Values.OrderBy(s => s.Type == ItemType.Dir ? 2 : 1).ThenBy(s => s.Info.Name.ToLowerInvariant()).ToArray();
+
+                // Phase 4: sync access control and filesystem attributes
+                foreach (var srcItem in srcItems)
+                {
+                    var tgtItem = tgtDict.Get(srcItem.Info.Name, null);
+                    if (tgtItem == null)
+                        continue;
+                    Console.Title = "Attributes: " + GetOriginalSrcPath(srcItem.Info.FullName);
+
+                    if (srcItem.Type != ItemType.Dir) // directories are handled by Copy* calls just before and just after these 4 phases
+                    {
+                        CopyAccessControl(srcItem, tgtItem);
+                        CopyAttributes(srcItem, tgtItem);
+                    }
+                }
+                CopyAttributes(src, tgt);
 
                 // Update statistics
                 if (Settings != null)
@@ -770,13 +786,5 @@ namespace HoboMirror
             Info = info;
             Type = type;
         }
-    }
-
-    class FileSystemInfoMetadata
-    {
-        public DateTime CreationTimeUtc, LastWriteTimeUtc, LastAccessTimeUtc;
-        public IO.FileAttributes Attributes;
-        public FileSecurity FileSecurity;
-        public DirectorySecurity DirectorySecurity;
     }
 }
