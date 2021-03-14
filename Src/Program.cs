@@ -230,8 +230,8 @@ namespace HoboMirror
             if (path != null)
                 ChangedDirs.Add(Path.GetDirectoryName(path).WithSlash());
             var msg = text + path + whatChanged;
-            ConsoleUtil.WriteParagraphs((text + path + whatChanged).Color(ConsoleColor.Yellow));
-            ChangeLog?.WriteLine(text + path + whatChanged);
+            ConsoleUtil.WriteParagraphs(msg.Color(ConsoleColor.Yellow));
+            ChangeLog?.WriteLine(msg);
             ChangeLog?.Flush();
         }
 
@@ -733,7 +733,7 @@ namespace HoboMirror
         public ItemType Type { get; private set; }
         public string LinkTarget { get; private set; } // null if not a symlink or a junction
         public string PrintName { get; private set; } // null if not a junction
-        public string TypeDesc => Type == ItemType.Dir ? "directory" : Type == ItemType.DirSymlink ? "directory-symlink" : Type == ItemType.File ? "file" : Type == ItemType.FileSymlink ? "file-symlink" : Type == ItemType.Junction ? "directory-junction" : throw new Exception("unreachable 63161");
+        public string TypeDesc => Type == ItemType.Dir ? "directory" : Type == ItemType.DirSymlink ? "directory-symlink" : Type == ItemType.File ? "file" : Type == ItemType.FileSymlink ? "file-symlink" : Type == ItemType.Junction ? "junction" : throw new Exception("unreachable 63161");
         public override string ToString() => $"{TypeDesc}: {Info.FullName}{(LinkTarget == null ? "" : (" -> " + LinkTarget))}";
 
         public Item(FileSystemInfo info)
