@@ -187,27 +187,42 @@ namespace HoboMirror
             EFileAttributes dwFlagsAndAttributes,
             IntPtr hTemplateFile);
 
-        public static void Create(string junctionPoint, string targetDir)
+        public static string NiceNameToRawName(string niceName)
         {
-            if (targetDir.StartsWith(@"\\?\Volume{"))
-                targetDir = @"\??\" + targetDir.Substring(4);
-            else if (!targetDir.StartsWith(@"\??\"))
-                targetDir = @"\??\" + targetDir;
+            if (niceName.StartsWith(@"\\?\Volume{"))
+                return @"\??\" + niceName.Substring(4);
+            if (!niceName.StartsWith(@"\??\"))
+                return @"\??\" + niceName;
+            return niceName;
+        }
 
+        public static string RawNameToNiceName(string rawName)
+        {
+            if (rawName.StartsWith(@"\??\Volume{"))
+                return @"\\?\" + rawName.Substring(4);
+            if (rawName.StartsWith(@"\??\"))
+                return rawName.Substring(4);
+            return rawName;
+        }
+
+        public static void Create(string junctionPoint, string substituteName, string printName)
+        {
             using (SafeFileHandle handle = OpenReparsePoint(junctionPoint, EFileAccess.GenericWrite))
             {
-                byte[] targetDirBytes = Encoding.Unicode.GetBytes(targetDir);
+                byte[] substituteNameBytes = Encoding.Unicode.GetBytes(substituteName);
+                byte[] printNameBytes = Encoding.Unicode.GetBytes(printName);
 
                 REPARSE_DATA_BUFFER reparseDataBuffer = new REPARSE_DATA_BUFFER();
 
                 reparseDataBuffer.ReparseTag = IO_REPARSE_TAG_MOUNT_POINT;
-                reparseDataBuffer.ReparseDataLength = (ushort)(targetDirBytes.Length + 12);
+                reparseDataBuffer.ReparseDataLength = (ushort) (substituteNameBytes.Length + printNameBytes.Length + 12);
                 reparseDataBuffer.SubstituteNameOffset = 0;
-                reparseDataBuffer.SubstituteNameLength = (ushort)targetDirBytes.Length;
-                reparseDataBuffer.PrintNameOffset = (ushort)(targetDirBytes.Length + 2);
-                reparseDataBuffer.PrintNameLength = 0;
+                reparseDataBuffer.SubstituteNameLength = (ushort) substituteNameBytes.Length;
+                reparseDataBuffer.PrintNameOffset = (ushort) (substituteNameBytes.Length + 2);
+                reparseDataBuffer.PrintNameLength = (ushort) printNameBytes.Length;
                 reparseDataBuffer.PathBuffer = new byte[0x3ff0];
-                Array.Copy(targetDirBytes, reparseDataBuffer.PathBuffer, targetDirBytes.Length);
+                Array.Copy(substituteNameBytes, 0, reparseDataBuffer.PathBuffer, reparseDataBuffer.SubstituteNameOffset, reparseDataBuffer.SubstituteNameLength);
+                Array.Copy(printNameBytes, 0, reparseDataBuffer.PathBuffer, reparseDataBuffer.PrintNameOffset, reparseDataBuffer.PrintNameLength);
 
                 int inBufferSize = Marshal.SizeOf(reparseDataBuffer);
                 IntPtr inBuffer = Marshal.AllocHGlobal(inBufferSize);
@@ -218,7 +233,7 @@ namespace HoboMirror
 
                     int bytesReturned;
                     bool result = DeviceIoControl(handle.DangerousGetHandle(), FSCTL_SET_REPARSE_POINT,
-                        inBuffer, targetDirBytes.Length + 20, IntPtr.Zero, 0, out bytesReturned, IntPtr.Zero);
+                        inBuffer, substituteNameBytes.Length + printNameBytes.Length + 20, IntPtr.Zero, 0, out bytesReturned, IntPtr.Zero);
 
                     if (!result)
                         ThrowLastWin32Error("Unable to create junction point.");
@@ -294,14 +309,22 @@ namespace HoboMirror
         /// or some other error occurs</exception>
         public static bool Exists(string path)
         {
-            if (! Directory.Exists(path))
+            if (!Directory.Exists(path))
                 return false;
 
             using (SafeFileHandle handle = OpenReparsePoint(path, EFileAccess.GenericRead))
             {
-                string target = InternalGetTarget(handle);
-                return target != null;
+                var target = InternalGetTarget(handle);
+                return target != null && target.IsJunction;
             }
+        }
+
+        public class ReparsePointInfo
+        {
+            public ReparsePointTag ReparseTag;
+            public bool IsJunction;
+            public string SubstituteName;
+            public string PrintName;
         }
 
         /// <summary>
@@ -314,11 +337,11 @@ namespace HoboMirror
         /// <returns>The target of the junction point</returns>
         /// <exception cref="IOException">Thrown when the specified path does not
         /// exist, is invalid, is not a junction point, or some other error occurs</exception>
-        public static string GetTarget(string junctionPoint)
+        public static ReparsePointInfo GetTarget(string junctionPoint)
         {
             using (SafeFileHandle handle = OpenReparsePoint(junctionPoint, EFileAccess.GenericRead))
             {
-                string target = InternalGetTarget(handle);
+                var target = InternalGetTarget(handle);
                 if (target == null)
                     throw new System.IO.IOException("Path is not a junction point.");
 
@@ -326,7 +349,7 @@ namespace HoboMirror
             }
         }
 
-        private static string InternalGetTarget(SafeFileHandle handle)
+        private static ReparsePointInfo InternalGetTarget(SafeFileHandle handle)
         {
             int outBufferSize = Marshal.SizeOf(typeof(REPARSE_DATA_BUFFER));
             IntPtr outBuffer = Marshal.AllocHGlobal(outBufferSize);
@@ -349,18 +372,21 @@ namespace HoboMirror
                 REPARSE_DATA_BUFFER reparseDataBuffer = (REPARSE_DATA_BUFFER)
                     Marshal.PtrToStructure(outBuffer, typeof(REPARSE_DATA_BUFFER));
 
-                if (reparseDataBuffer.ReparseTag != IO_REPARSE_TAG_MOUNT_POINT)
-                    return null;
+                var res = new ReparsePointInfo
+                {
+                    ReparseTag = (ReparsePointTag) reparseDataBuffer.ReparseTag,
+                    IsJunction = reparseDataBuffer.ReparseTag == IO_REPARSE_TAG_MOUNT_POINT,
+                };
 
-                string targetDir = Encoding.Unicode.GetString(reparseDataBuffer.PathBuffer,
+                if (!res.IsJunction)
+                    return res;
+
+                res.SubstituteName = Encoding.Unicode.GetString(reparseDataBuffer.PathBuffer,
                     reparseDataBuffer.SubstituteNameOffset, reparseDataBuffer.SubstituteNameLength);
+                res.PrintName = Encoding.Unicode.GetString(reparseDataBuffer.PathBuffer,
+                    reparseDataBuffer.PrintNameOffset, reparseDataBuffer.PrintNameLength);
 
-                if (targetDir.StartsWith(@"\??\Volume{"))
-                    targetDir = @"\\?\" + targetDir.Substring(4);
-                else if (targetDir.StartsWith(@"\??\"))
-                    targetDir = targetDir.Substring(4);
-
-                return targetDir;
+                return res;
             }
             finally
             {

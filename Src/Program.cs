@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
@@ -485,7 +485,7 @@ namespace HoboMirror
                     else if (srcItem.Type == ItemType.DirSymlink)
                         ActCreateDirSymlink(tgtFullName, srcItem.LinkTarget);
                     else if (srcItem.Type == ItemType.Junction)
-                        ActCreateJunction(tgtFullName, srcItem.LinkTarget);
+                        ActCreateJunction(tgtFullName, srcItem.LinkTarget, srcItem.PrintName);
                     else
                         throw new Exception("unreachable 49612");
 
@@ -547,11 +547,11 @@ namespace HoboMirror
         ///     Assumes that both the source and the target exist, and that both are junctions.</summary>
         private static void SyncJunction(Item src, Item tgt)
         {
-            if (src.LinkTarget == tgt.LinkTarget)
+            if (src.LinkTarget == tgt.LinkTarget && src.PrintName == tgt.PrintName)
                 return;
-            LogChange($"Found a modified {src.TypeDesc}: ", GetOriginalSrcPath(src.DirInfo.FullName), whatChanged: $"\r\n    target: {tgt.LinkTarget} -> {src.LinkTarget}");
+            LogChange($"Found a modified {src.TypeDesc}: ", GetOriginalSrcPath(src.DirInfo.FullName), whatChanged: $"\r\n    target: {tgt.LinkTarget} -> {src.LinkTarget}\r\n    print name: {tgt.PrintName} -> {src.PrintName}");
             ActDelete(tgt);
-            ActCreateJunction(tgt.DirInfo.WithName(src.DirInfo.Name), src.LinkTarget);
+            ActCreateJunction(tgt.DirInfo.WithName(src.DirInfo.Name), src.LinkTarget, src.PrintName);
         }
 
         /// <summary>Deletes the specified item of any type. Assumes that the item exists.</summary>
@@ -614,12 +614,12 @@ namespace HoboMirror
         }
 
         /// <summary>Creates the specified junction. Assumes that it doesn't exist.</summary>
-        private static void ActCreateJunction(string fullName, string linkTarget)
+        private static void ActCreateJunction(string fullName, string linkTarget, string printName)
         {
             TryCatchIoAction("create junction", fullName, () =>
             {
                 Directory.CreateDirectory(fullName);
-                JunctionPoint.Create(fullName, linkTarget);
+                JunctionPoint.Create(fullName, linkTarget, printName);
             });
         }
 
@@ -730,6 +730,7 @@ namespace HoboMirror
         public DirectoryInfo DirInfo => (DirectoryInfo) Info;
         public ItemType Type { get; private set; }
         public string LinkTarget { get; private set; } // null if not a symlink or a junction
+        public string PrintName { get; private set; } // null if not a junction
         public string TypeDesc => Type == ItemType.Dir ? "directory" : Type == ItemType.DirSymlink ? "directory-symlink" : Type == ItemType.File ? "file" : Type == ItemType.FileSymlink ? "file-symlink" : Type == ItemType.Junction ? "directory-junction" : throw new Exception("unreachable 63161");
         public override string ToString() => $"{TypeDesc}: {Info.FullName}{(LinkTarget == null ? "" : (" -> " + LinkTarget))}";
 
@@ -741,7 +742,9 @@ namespace HoboMirror
                 if (JunctionPoint.Exists(info.FullName))
                 {
                     Type = ItemType.Junction;
-                    LinkTarget = JunctionPoint.GetTarget(info.FullName);
+                    var reparse = JunctionPoint.GetTarget(info.FullName);
+                    LinkTarget = reparse.SubstituteName;
+                    PrintName = reparse.PrintName;
                 }
                 else
                 {
