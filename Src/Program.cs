@@ -38,6 +38,7 @@ namespace HoboMirror
         {
             if (args.Length == 2 && args[0] == "--post-build-check")
                 return Ut.RunPostBuildChecks(args[1], Assembly.GetExecutingAssembly());
+            Console.OutputEncoding = Encoding.UTF8;
 
 #if !DEBUG
             try
@@ -77,8 +78,6 @@ namespace HoboMirror
                     ClassifyJson.SerializeToFile(Settings, Args.SettingsPath);
                 }
                 RefreshAccessControl = Settings.SkipRefreshAccessControlDays == null || (Settings.LastRefreshAccessControl + TimeSpan.FromDays((double) Settings.SkipRefreshAccessControlDays) < DateTime.UtcNow);
-                if (RefreshAccessControl)
-                    Settings.LastRefreshAccessControl = DateTime.UtcNow;
                 Console.WriteLine($"Refresh access control: {RefreshAccessControl}");
                 Console.WriteLine($"Update metadata: {UpdateMetadata}");
             }
@@ -133,6 +132,8 @@ namespace HoboMirror
                 {
                     WinAPI.ModifyPrivilege(PrivilegeName.SeBackupPrivilege, true);
                     WinAPI.ModifyPrivilege(PrivilegeName.SeRestorePrivilege, true);
+                    //WinAPI.ModifyPrivilege(PrivilegeName.SeSecurityPrivilege, true);
+                    //WinAPI.ModifyPrivilege(PrivilegeName.SeTakeOwnershipPrivilege, true);
                 }
                 catch (Win32Exception e)
                 {
@@ -191,6 +192,9 @@ namespace HoboMirror
                     foreach (var chg in changes.OrderBy(ch => ch.changeFreq))
                         LogChange($"  {chg.path} — {chg.changeFreq:0.0%}", null);
                 }
+
+                if (RefreshAccessControl)
+                    Settings.LastRefreshAccessControl = DateTime.UtcNow;
 
                 // Save settings file
                 if (Args.SettingsPath != null)
