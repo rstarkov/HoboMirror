@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
@@ -555,9 +555,9 @@ namespace HoboMirror
         {
             if (src.LinkTarget == tgt.LinkTarget)
                 return;
-            LogChange($"Found a modified {src.TypeDesc}: ", GetOriginalSrcPath(src.DirInfo.FullName), whatChanged: $"\r\n    target: {tgt.LinkTarget} -> {src.LinkTarget}");
+            LogChange($"Found a modified {src.TypeDesc}: ", GetOriginalSrcPath(src.FileInfo.FullName), whatChanged: $"\r\n    target: {tgt.LinkTarget} -> {src.LinkTarget}");
             ActDelete(tgt);
-            ActCreateFileSymlink(tgt.DirInfo.FullNameWithName(src.DirInfo.Name), src.LinkTarget);
+            ActCreateFileSymlink(tgt.FileInfo.FullNameWithName(src.FileInfo.Name), src.LinkTarget);
         }
 
         /// <summary>
