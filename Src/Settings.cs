@@ -11,6 +11,8 @@ namespace HoboMirror
         public AutoDictionary<string, ChangeCount> DirectoryChangeCount = new AutoDictionary<string, ChangeCount>(StringComparer.OrdinalIgnoreCase, _ => new ChangeCount());
         public decimal? SkipRefreshAccessControlDays = null;
         public DateTime LastRefreshAccessControl = default(DateTime);
+        public string[] IgnoreDirNames = new string[0];
+        public string[] IgnorePaths = new string[0];
     }
 
     class ChangeCount

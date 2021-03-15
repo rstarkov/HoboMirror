@@ -150,8 +150,10 @@ namespace HoboMirror
                         var fromPath = Path.Combine(vscVolumes[task.FromVolume].SnapshotPath, task.FromPath.Substring(task.FromVolume.Length));
                         LogAll($"    Mirror task: from “{task.FromPath}” to “{task.ToPath}” (volume snapshot path: {fromPath})");
                     }
-                    foreach (var ignore in Args.IgnorePath)
+                    foreach (var ignore in Args.IgnorePath.Concat(Settings.IgnorePaths).Order())
                         LogAll($"    Ignore path: “{ignore}”");
+                    foreach (var ignore in Settings.IgnoreDirNames)
+                        LogAll($"    Ignore directory name: “{ignore}”");
 
                     foreach (var task in tasks)
                     {
@@ -415,13 +417,18 @@ namespace HoboMirror
                 tgtDict.Remove("__HoboMirrorTarget__.txt");
                 // Ignore paths as requested: pretend they don't exist in source, which gets them deleted in target if present
                 foreach (var srcItem in srcDict.Values.ToList())
-                    foreach (var ignore in Args.IgnorePath)
-                        if (PathsEqual(GetOriginalSrcPath(srcItem.Info.FullName), ignore))
-                        {
-                            LogAction($"Ignoring path: {GetOriginalSrcPath(srcItem.Info.FullName)}");
-                            srcDict.Remove(srcItem.Info.Name);
-                            break;
-                        }
+                {
+                    if (Args.IgnorePath.Concat(Settings.IgnorePaths).Any(ignore => PathsEqual(GetOriginalSrcPath(srcItem.Info.FullName), ignore)))
+                    {
+                        LogAction($"Ignoring path: {GetOriginalSrcPath(srcItem.Info.FullName)}");
+                        srcDict.Remove(srcItem.Info.Name);
+                    }
+                    else if (srcItem.Type == ItemType.Dir && Settings.IgnoreDirNames.Any(ignore => ignore.EqualsNoCase(srcItem.DirInfo.Name)))
+                    {
+                        LogAction($"Ignoring directory name: {GetOriginalSrcPath(srcItem.Info.FullName)}");
+                        srcDict.Remove(srcItem.Info.Name);
+                    }
+                }
                 // Update the item arrays to remove filtered items, and sort them into final processing order
                 srcItems = srcDict.Values.OrderBy(s => s.Type == ItemType.Dir ? 2 : 1).ThenBy(s => s.Info.Name.ToLowerInvariant()).ToArray();
                 tgtItems = tgtDict.Values.OrderBy(s => s.Type == ItemType.Dir ? 2 : 1).ThenBy(s => s.Info.Name.ToLowerInvariant()).ToArray();
