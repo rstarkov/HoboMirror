@@ -1,77 +1,50 @@
-﻿using System;
-using System.ComponentModel;
-using System.Diagnostics;
+﻿using System.ComponentModel;
 using System.Runtime.InteropServices;
-using System.Security.Principal;
+using Microsoft.Win32.SafeHandles;
+using Windows.Win32;
+using Windows.Win32.Foundation;
+using Windows.Win32.Security;
 
 namespace HoboMirror
 {
     static class WinAPI
     {
         /// <summary>
-        ///     Enables or disables the specified privilege on the primary access token of the current process.</summary>
+        ///     Enables or disables the specified privilege on the primary access token of the current process. Throws if the
+        ///     token is not assigned the specified privilege at all, in which case it cannot be enabled or disabled.</summary>
         /// <param name="privilege">
         ///     Privilege to enable or disable.</param>
         /// <param name="enable">
         ///     True to enable the privilege, false to disable it.</param>
         /// <returns>
         ///     True if the privilege was enabled prior to the change, false if it was disabled.</returns>
-        public static bool ModifyPrivilege(PrivilegeName privilege, bool enable)
+        public static unsafe bool ModifyPrivilege(PrivilegeName privilege, bool enable)
         {
             LUID luid;
-            if (!LookupPrivilegeValue(null, privilege.ToString(), out luid))
+            if (!PInvoke.LookupPrivilegeValue(null, privilege.ToString(), out luid))
                 throw new Win32Exception();
 
-            using (var identity = WindowsIdentity.GetCurrent(TokenAccessLevels.AdjustPrivileges | TokenAccessLevels.Query))
+            SafeFileHandle hToken;
+            if (!PInvoke.OpenProcessToken(PInvoke.GetCurrentProcess_SafeHandle(), TOKEN_ACCESS_MASK.TOKEN_ADJUST_PRIVILEGES | TOKEN_ACCESS_MASK.TOKEN_QUERY, out hToken))
+                throw new Win32Exception();
+            using (hToken)
             {
                 var newPriv = new TOKEN_PRIVILEGES();
-                newPriv.Privileges = new LUID_AND_ATTRIBUTES[1];
                 newPriv.PrivilegeCount = 1;
                 newPriv.Privileges[0].Luid = luid;
-                newPriv.Privileges[0].Attributes = enable ? SE_PRIVILEGE_ENABLED : 0;
+                newPriv.Privileges[0].Attributes = enable ? TOKEN_PRIVILEGES_ATTRIBUTES.SE_PRIVILEGE_ENABLED : 0;
 
                 var prevPriv = new TOKEN_PRIVILEGES();
-                prevPriv.Privileges = new LUID_AND_ATTRIBUTES[1];
                 prevPriv.PrivilegeCount = 1;
                 uint returnedBytes;
 
-                if (!AdjustTokenPrivileges(identity.Token, false, ref newPriv, (uint) Marshal.SizeOf(prevPriv), ref prevPriv, out returnedBytes))
+                if (!PInvoke.AdjustTokenPrivileges(hToken, false, &newPriv, (uint)Marshal.SizeOf(prevPriv), &prevPriv, &returnedBytes))
                     throw new Win32Exception();
+                if (Marshal.GetLastWin32Error() != 0)
+                    throw new Win32Exception(); // probably means process needs elevation or user does not have the privilege
 
-                return prevPriv.PrivilegeCount == 0 ? enable /* didn't make a change */ : ((prevPriv.Privileges[0].Attributes & SE_PRIVILEGE_ENABLED) != 0);
+                return prevPriv.PrivilegeCount == 0 ? enable /* didn't make a change */ : ((prevPriv.Privileges[0].Attributes & TOKEN_PRIVILEGES_ATTRIBUTES.SE_PRIVILEGE_ENABLED) != 0);
             }
-        }
-
-        const uint SE_PRIVILEGE_ENABLED = 2;
-
-        [DllImport("advapi32.dll", SetLastError = true)]
-        [return: MarshalAs(UnmanagedType.Bool)]
-        static extern bool AdjustTokenPrivileges(IntPtr TokenHandle, [MarshalAs(UnmanagedType.Bool)] bool DisableAllPrivileges, ref TOKEN_PRIVILEGES NewState,
-           UInt32 BufferLengthInBytes, ref TOKEN_PRIVILEGES PreviousState, out UInt32 ReturnLengthInBytes);
-
-        [DllImport("advapi32.dll", SetLastError = true, CharSet = CharSet.Auto)]
-        [return: MarshalAs(UnmanagedType.Bool)]
-        static extern bool LookupPrivilegeValue(string lpSystemName, string lpName, out LUID lpLuid);
-
-        struct TOKEN_PRIVILEGES
-        {
-            public UInt32 PrivilegeCount;
-            [MarshalAs(UnmanagedType.ByValArray, SizeConst = 1 /*ANYSIZE_ARRAY*/)]
-            public LUID_AND_ATTRIBUTES[] Privileges;
-        }
-
-        [StructLayout(LayoutKind.Sequential)]
-        struct LUID_AND_ATTRIBUTES
-        {
-            public LUID Luid;
-            public UInt32 Attributes;
-        }
-
-        [StructLayout(LayoutKind.Sequential)]
-        struct LUID
-        {
-            public uint LowPart;
-            public int HighPart;
         }
     }
 

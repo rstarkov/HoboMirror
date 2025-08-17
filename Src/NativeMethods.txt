@@ -1,0 +1,4 @@
+LookupPrivilegeValue
+OpenProcessToken
+GetCurrentProcess
+AdjustTokenPrivileges
