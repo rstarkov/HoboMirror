@@ -1,12 +1,10 @@
-﻿using System.Linq;
-using Alphaleonis.Win32.Filesystem;
+﻿using RT.CommandLine;
+using RT.PostBuild;
 using RT.Util;
-using RT.Util.CommandLine;
 using RT.Util.Consoles;
 
 namespace HoboMirror
 {
-    [CommandLine]
     [DocumentationRhoML("Mirrors the contents of one directory to another. New and modified files are copied to the destination directory. Files and directories missing in the source directory are {h}permanently deleted without confirmation{}. File and directory attributes, creation/modification times and security attributes are also replicated. Junctions and symbolic links are copied as links and are never recursed into. The source volumes are snapshotted using VSS to ensure all files are in a consistent state, including files currently open by running programs.")]
     class CmdLine : ICommandLineValidatable
     {
@@ -53,7 +51,7 @@ namespace HoboMirror
 
         private static void PostBuildCheck(IPostBuildReporter rep)
         {
-            CommandLineParser.PostBuildStep<CmdLine>(rep, null);
+            CommandLineParser.PostBuildStep<CmdLine>(rep);
         }
     }
 }

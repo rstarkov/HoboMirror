@@ -1,7 +1,4 @@
-﻿using System.Collections.Generic;
-using Alphaleonis.Win32.Filesystem;
-
-namespace HoboMirror
+﻿namespace HoboMirror
 {
     static class ExtensionMethods
     {
