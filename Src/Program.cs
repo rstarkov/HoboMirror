@@ -639,7 +639,7 @@ class Program
         TryCatchIoAction("create junction", fullName, () =>
         {
             Directory.CreateDirectory(fullName);
-            JunctionPoint.Create(fullName, linkTarget, printName);
+            ReparsePoint.Create(fullName, linkTarget, printName);
         });
     }
 
@@ -759,18 +759,20 @@ class Item
         Info = info;
         if (info.IsReparsePoint())
         {
-            if (JunctionPoint.Exists(info.FullName))
+            var rp = ReparsePoint.GetTarget(info.FullName);
+            if (rp.IsJunction)
             {
                 Type = ItemType.Junction;
-                var reparse = JunctionPoint.GetTarget(info.FullName);
-                LinkTarget = reparse.SubstituteName;
-                PrintName = reparse.PrintName;
+                LinkTarget = rp.SubstituteName;
+                PrintName = rp.PrintName;
             }
-            else
+            else if (rp.IsSymlink)
             {
                 Type = info is FileInfo ? ItemType.FileSymlink : info is DirectoryInfo ? ItemType.DirSymlink : throw new Exception("unreachable 27117");
-                LinkTarget = File.GetLinkTargetInfo(info.FullName).PrintName; // this should throw for reparse points of unknown types (ie neither junction nor symlink)
+                LinkTarget = rp.PrintName;
             }
+            else
+                throw new Exception($"unrecognized reparse point type {rp.ReparseTag}");
         }
         else if (info is FileInfo)
             Type = ItemType.File;
