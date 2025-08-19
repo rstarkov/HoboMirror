@@ -335,7 +335,6 @@ class VolumeShadowCopy : IDisposable
         return result.ToString();
     }
 
-    [SecurityPermission(SecurityAction.LinkDemand, UnmanagedCode = true)]
     private static string GetDisplayNameForVolume(string volumeName)
     {
         string[] volumeMountPoints = GetVolumePathNamesForVolume(volumeName);
@@ -352,7 +351,6 @@ class VolumeShadowCopy : IDisposable
         return smallestMountPoint;
     }
 
-    [SecurityPermission(SecurityAction.LinkDemand, UnmanagedCode = true)]
     private static string[] GetVolumePathNamesForVolume(string volumeName)
     {
         if (volumeName == null)
@@ -363,7 +361,7 @@ class VolumeShadowCopy : IDisposable
 
         if (!NativeMethods.GetVolumePathNamesForVolumeNameW(volumeName, buffer, (uint)buffer.Length, ref requiredLength))
         {
-            int errorCode = Marshal.GetLastWin32Error();
+            int errorCode = WinAPI.GetLastError();
             if (errorCode == NativeMethods.ERROR_MORE_DATA || errorCode == NativeMethods.ERROR_INSUFFICIENT_BUFFER)
             {
                 buffer = new char[requiredLength];

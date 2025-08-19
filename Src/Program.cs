@@ -8,11 +8,12 @@ using System.Security.AccessControl;
 using System.Text;
 using System.Text.RegularExpressions;
 using Alphaleonis.Win32.Filesystem;
+using RT.CommandLine;
+using RT.PostBuild;
+using RT.Serialization;
 using RT.Util;
-using RT.Util.CommandLine;
 using RT.Util.Consoles;
 using RT.Util.ExtensionMethods;
-using RT.Util.Serialization;
 using Windows.Win32.Storage.FileSystem;
 using IO = System.IO;
 
@@ -38,7 +39,7 @@ class Program
     static int Main(string[] args)
     {
         if (args.Length == 2 && args[0] == "--post-build-check")
-            return Ut.RunPostBuildChecks(args[1], Assembly.GetExecutingAssembly());
+            return PostBuildChecker.RunPostBuildChecks(args[1], Assembly.GetExecutingAssembly());
         Console.OutputEncoding = Encoding.UTF8;
 
 #if !DEBUG
@@ -108,7 +109,7 @@ class Program
                 FromVolume =
                     Regex.Match(from, @"^\\\\\?\\Volume{[^}]+}\\").Apply(match => match.Success ? match.Groups[0].Value : null)
                     ?? Regex.Match(from, @"^\w:\\").Apply(match => match.Success ? match.Groups[0].Value : null)
-                    ?? Ut.Throw<string>(new InvalidOperationException($"Expected absolute path: {from}")) // this should be taken care of by the CmdLine specification, so throw here
+                    ?? throw new InvalidOperationException($"Expected absolute path: {from}") // this should be taken care of by the CmdLine specification, so throw here
             });
 
             // Log header
