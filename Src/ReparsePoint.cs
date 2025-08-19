@@ -7,7 +7,7 @@ using Windows.Win32.Storage.FileSystem;
 
 namespace HoboMirror;
 
-public static class JunctionPoint
+public static class ReparsePoint
 {
     public static string NiceNameToRawName(string niceName)
     {
