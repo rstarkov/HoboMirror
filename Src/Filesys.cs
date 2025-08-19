@@ -1,4 +1,4 @@
-﻿using System.ComponentModel;
+using System.ComponentModel;
 using System.Runtime.InteropServices;
 using Windows.Wdk.Storage.FileSystem;
 using Windows.Win32;
@@ -49,6 +49,16 @@ static class Filesys
         FILE_DISPOSITION_INFORMATION_EX info;
         info.Flags = FILE_DISPOSITION_INFORMATION_EX_FLAGS.FILE_DISPOSITION_DELETE | FILE_DISPOSITION_INFORMATION_EX_FLAGS.FILE_DISPOSITION_IGNORE_READONLY_ATTRIBUTE;
         PInvoke.SetFileInformationByHandle(handle, FILE_INFO_BY_HANDLE_CLASS.FileDispositionInfoEx, &info, (uint)Marshal.SizeOf<FILE_DISPOSITION_INFORMATION_EX>());
+        if (WinAPI.GetLastError() != 0) throw new Win32Exception();
+    }
+
+    /// <summary>Does NOT use backup semantics (todo).</summary>
+    public static unsafe void CopyFile(string source, string destination, Func<COPYFILE2_MESSAGE, COPYFILE2_MESSAGE_ACTION> progress = null)
+    {
+        COPYFILE2_EXTENDED_PARAMETERS param = new();
+        param.dwSize = (uint)Marshal.SizeOf<COPYFILE2_EXTENDED_PARAMETERS>();
+        param.pProgressRoutine = (msg, _) => progress(*msg);
+        PInvoke.CopyFile2(source, destination, param);
         if (WinAPI.GetLastError() != 0) throw new Win32Exception();
     }
 }

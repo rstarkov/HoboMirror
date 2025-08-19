@@ -659,10 +659,7 @@ class Program
 
         bool success = TryCatchIoAction("copy file", GetOriginalSrcPath(src.FullName), () =>
         {
-            // This must not directly call src.CopyTo because AlphaFS will modify the instance and make it point to the new file...
-            var res = new FileInfo(src.FullName).CopyTo(tgtTemp, CopyOptions.FailIfExists, CopyProgress, null);
-            if (res.ErrorCode != 0)
-                throw new Exception(res.ErrorMessage);
+            Filesys.CopyFile(src.FullName, tgtTemp, CopyProgress);
             return true;
         });
         if (!success)
@@ -673,7 +670,7 @@ class Program
             if (File.Exists(tgtFullName))
             {
                 LogAction($"Delete old version of this file: {tgtFullName}");
-                new FileInfo(tgtFullName).Delete(ignoreReadOnly: true);
+                Filesys.Delete(tgtFullName);
             }
             return true;
         }, err => $"Unable to delete old version of this file ({err}): {tgtFullName}");
@@ -682,7 +679,7 @@ class Program
 
         TryCatchIo(() =>
         {
-            File.Move(tgtTemp, tgtFullName, MoveOptions.None);
+            File.Move(tgtTemp, tgtFullName, overwrite: false);
         }, err => $"Unable to rename temp copied file to final destination ({err}): {tgtFullName}");
     }
 
@@ -723,14 +720,28 @@ class Program
     }
 
     private static DateTime lastProgress;
-    private static CopyMoveProgressResult CopyProgress(long totalFileSize, long totalBytesTransferred, long streamSize, long streamBytesTransferred, int streamNumber, CopyMoveProgressCallbackReason callbackReason, object userData)
+    private static COPYFILE2_MESSAGE_ACTION CopyProgress(COPYFILE2_MESSAGE msg)
     {
+        ulong totalFileSize = 0, totalBytesTransferred = 0;
+        if (msg.Type == COPYFILE2_MESSAGE_TYPE.COPYFILE2_CALLBACK_CHUNK_FINISHED)
+        {
+            totalFileSize = msg.Info.ChunkFinished.uliTotalFileSize;
+            totalBytesTransferred = msg.Info.ChunkFinished.uliTotalBytesTransferred;
+        }
+        else if (msg.Type == COPYFILE2_MESSAGE_TYPE.COPYFILE2_CALLBACK_STREAM_FINISHED)
+        {
+            totalFileSize = msg.Info.StreamFinished.uliTotalFileSize;
+            totalBytesTransferred = msg.Info.StreamFinished.uliTotalBytesTransferred;
+        }
+        else
+            return COPYFILE2_MESSAGE_ACTION.COPYFILE2_PROGRESS_CONTINUE;
+
         if (lastProgress < DateTime.UtcNow - TimeSpan.FromMilliseconds(100))
         {
             lastProgress = DateTime.UtcNow;
             Console.Title = $"Copying {totalBytesTransferred / (double)totalFileSize * 100.0:0.0}% : {totalBytesTransferred / 1000000.0:#,0} MB of {totalFileSize / 1000000.0:#,0} MB";
         }
-        return CopyMoveProgressResult.Continue;
+        return COPYFILE2_MESSAGE_ACTION.COPYFILE2_PROGRESS_CONTINUE;
     }
 }
 
