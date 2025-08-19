@@ -40,12 +40,14 @@ namespace HoboMirror
 
                 if (!PInvoke.AdjustTokenPrivileges(hToken, false, &newPriv, (uint)Marshal.SizeOf(prevPriv), &prevPriv, &returnedBytes))
                     throw new Win32Exception();
-                if (Marshal.GetLastWin32Error() != 0)
+                if (WinAPI.GetLastError() != 0)
                     throw new Win32Exception(); // probably means process needs elevation or user does not have the privilege
 
                 return prevPriv.PrivilegeCount == 0 ? enable /* didn't make a change */ : ((prevPriv.Privileges[0].Attributes & TOKEN_PRIVILEGES_ATTRIBUTES.SE_PRIVILEGE_ENABLED) != 0);
             }
         }
+
+        public static WIN32_ERROR GetLastError() => (WIN32_ERROR)Marshal.GetLastWin32Error();
     }
 
     enum PrivilegeName
