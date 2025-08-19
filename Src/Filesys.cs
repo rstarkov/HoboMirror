@@ -1,5 +1,6 @@
 ﻿using System.ComponentModel;
 using System.Runtime.InteropServices;
+using Windows.Wdk.Storage.FileSystem;
 using Windows.Win32;
 using Windows.Win32.Storage.FileSystem;
 
@@ -32,6 +33,22 @@ static class Filesys
         using var handle = PInvoke.CreateFile(path, (uint)FILE_ACCESS_RIGHTS.FILE_WRITE_ATTRIBUTES, FileShareAll, null, FileDispExisting, Semantics, null);
         if (WinAPI.GetLastError() != 0) throw new Win32Exception();
         PInvoke.SetFileInformationByHandle(handle, FILE_INFO_BY_HANDLE_CLASS.FileBasicInfo, &info, (uint)Marshal.SizeOf<FILE_BASIC_INFO>());
+        if (WinAPI.GetLastError() != 0) throw new Win32Exception();
+    }
+
+    /// <summary>
+    ///     Raw delete of a file or an empty directory. Uses backup semantics to bypass access control checks (requires
+    ///     SeBackup/SeRestore). For junctions and symlinks, deletes the junction/symlink - not the target, and not just the
+    ///     reparse data. It does not matter whether the link target is valid. Deletes read-only entries. Does not delete
+    ///     non-empty directories (throws).</summary>
+    public static unsafe void Delete(string path)
+    {
+        using var handle = PInvoke.CreateFile(path, (uint)FILE_ACCESS_RIGHTS.DELETE, FileShareAll, null, FileDispExisting, Semantics, null);
+        if (WinAPI.GetLastError() != 0) throw new Win32Exception();
+
+        FILE_DISPOSITION_INFORMATION_EX info;
+        info.Flags = FILE_DISPOSITION_INFORMATION_EX_FLAGS.FILE_DISPOSITION_DELETE | FILE_DISPOSITION_INFORMATION_EX_FLAGS.FILE_DISPOSITION_IGNORE_READONLY_ATTRIBUTE;
+        PInvoke.SetFileInformationByHandle(handle, FILE_INFO_BY_HANDLE_CLASS.FileDispositionInfoEx, &info, (uint)Marshal.SizeOf<FILE_DISPOSITION_INFORMATION_EX>());
         if (WinAPI.GetLastError() != 0) throw new Win32Exception();
     }
 }

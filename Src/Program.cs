@@ -581,8 +581,6 @@ class Program
         {
             if (tgt.Type == ItemType.Dir)
             {
-                // AlphaFS already does this, but just in case it stops doing this in a future release we do this explicitly, because the consequences of following a reparse point during a delete are dire.
-                // Also this lets us log every action.
                 var items = GetDirectoryItems(tgt.DirInfo);
                 if (items == null)
                     throw new Exception("could not enumerate directory contents");
@@ -590,18 +588,13 @@ class Program
                     ActDelete(item);
                 TryCatchIoAction("delete empty directory", tgt.DirInfo.FullName, () =>
                 {
-                    tgt.DirInfo.Delete(recursive: false, ignoreReadOnly: true);
+                    Filesys.Delete(tgt.Info.FullName);
                 });
             }
             else
             {
                 LogAction($"Delete {tgt.TypeDesc}: {tgt.Info.FullName}");
-                if (tgt.Type == ItemType.File || tgt.Type == ItemType.FileSymlink)
-                    tgt.FileInfo.Delete(ignoreReadOnly: true);
-                else if (tgt.Type == ItemType.DirSymlink || tgt.Type == ItemType.Junction)
-                    tgt.DirInfo.Delete(recursive: false, ignoreReadOnly: true);
-                else
-                    throw new Exception("unreachable 14234");
+                Filesys.Delete(tgt.Info.FullName);
             }
         }, err => $"Unable to delete {tgt.TypeDesc} ({err}): {tgt.Info.FullName}");
     }
