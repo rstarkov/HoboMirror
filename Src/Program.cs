@@ -13,6 +13,7 @@ using RT.Util.CommandLine;
 using RT.Util.Consoles;
 using RT.Util.ExtensionMethods;
 using RT.Util.Serialization;
+using Windows.Win32.Storage.FileSystem;
 using IO = System.IO;
 
 // Notes:
@@ -358,34 +359,22 @@ class Program
 
     private static void CopyAttributes(Item src, Item tgt)
     {
-#warning TODO: if the source is a reparse point, this copies timestamps from the linked file instead. If source points to non-existent file, it fails
         if (!UpdateMetadata)
             return;
 
-        IO.FileAttributes attrs = default;
-        DateTime creation = default, write = default, access = default;
+        FILE_BASIC_INFO info = default;
         var ok = TryCatchIo(() =>
         {
-            attrs = src.Info.Attributes;
-            creation = src.Info.CreationTimeUtc;
-            write = src.Info.LastWriteTimeUtc;
-            access = src.Info.LastAccessTimeUtc;
-            if (creation.Year == 1601 && creation.Month == 1 && creation.Day == 1)
-                throw new Exception("unknown error, invalid timestamp"); // currently this happens silently when getting the metadata of an invalid symlink
+            info = Filesys.GetTimestampsAndAttributes(src.Info.FullName);
             return true;
-        }, err => $"Unable to get {src.TypeDesc} filesystem attributes ({err}): {GetOriginalSrcPath(src.Info.FullName)}");
+        }, err => $"Unable to get {src.TypeDesc} times/attributes ({err}): {GetOriginalSrcPath(src.Info.FullName)}");
         if (!ok)
             return;
 
         TryCatchIo(() =>
         {
-            if (tgt.Info is FileInfo)
-                File.SetTimestampsUtc(tgt.Info.FullName, creation, access, write, true, PathFormat.FullPath);
-            else
-                Directory.SetTimestampsUtc(tgt.Info.FullName, creation, access, write, true, PathFormat.FullPath);
-            tgt.Info.Refresh(); // "archive" attribute may have been changed
-            tgt.Info.Attributes = attrs;
-        }, err => $"Unable to set {tgt.TypeDesc} attributes ({err}): {tgt.Info.FullName}");
+            Filesys.SetTimestampsAndAttributes(tgt.Info.FullName, info);
+        }, err => $"Unable to set {tgt.TypeDesc} times/attributes ({err}): {tgt.Info.FullName}");
     }
 
     /// <summary>
