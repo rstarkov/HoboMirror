@@ -93,7 +93,7 @@ class VolumeShadowCopy : IDisposable
         }
 
         var context = VssSnapshotContext.Backup;
-        var contextAttr = (VssVolumeSnapshotAttributes) context;
+        var contextAttr = (VssVolumeSnapshotAttributes)context;
 
         bkpComponents = vss.CreateVssBackupComponents();
 
@@ -330,7 +330,7 @@ class VolumeShadowCopy : IDisposable
     private static string ClusterGetVolumeNameForVolumeMountPoint(string volumeMountPoint)
     {
         var result = new StringBuilder(NativeMethods.MAX_PATH);
-        if (!NativeMethods.ClusterGetVolumeNameForVolumeMountPointW(volumeMountPoint, result, (uint) result.Capacity))
+        if (!NativeMethods.ClusterGetVolumeNameForVolumeMountPointW(volumeMountPoint, result, (uint)result.Capacity))
             throw new Win32Exception();
         return result.ToString();
     }
@@ -361,13 +361,13 @@ class VolumeShadowCopy : IDisposable
         uint requiredLength = 0;
         char[] buffer = new char[NativeMethods.MAX_PATH];
 
-        if (!NativeMethods.GetVolumePathNamesForVolumeNameW(volumeName, buffer, (uint) buffer.Length, ref requiredLength))
+        if (!NativeMethods.GetVolumePathNamesForVolumeNameW(volumeName, buffer, (uint)buffer.Length, ref requiredLength))
         {
             int errorCode = Marshal.GetLastWin32Error();
             if (errorCode == NativeMethods.ERROR_MORE_DATA || errorCode == NativeMethods.ERROR_INSUFFICIENT_BUFFER)
             {
                 buffer = new char[requiredLength];
-                if (!NativeMethods.GetVolumePathNamesForVolumeNameW(volumeName, buffer, (uint) buffer.Length, ref requiredLength))
+                if (!NativeMethods.GetVolumePathNamesForVolumeNameW(volumeName, buffer, (uint)buffer.Length, ref requiredLength))
                     Marshal.ThrowExceptionForHR(Marshal.GetHRForLastWin32Error());
             }
             else

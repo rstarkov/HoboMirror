@@ -78,7 +78,7 @@ class Program
                 Settings = new Settings();
                 ClassifyJson.SerializeToFile(Settings, Args.SettingsPath);
             }
-            RefreshAccessControl = Settings.SkipRefreshAccessControlDays == null || (Settings.LastRefreshAccessControl + TimeSpan.FromDays((double) Settings.SkipRefreshAccessControlDays) < DateTime.UtcNow);
+            RefreshAccessControl = Settings.SkipRefreshAccessControlDays == null || (Settings.LastRefreshAccessControl + TimeSpan.FromDays((double)Settings.SkipRefreshAccessControlDays) < DateTime.UtcNow);
             Console.WriteLine($"Refresh access control: {RefreshAccessControl}");
             Console.WriteLine($"Update metadata: {UpdateMetadata}");
         }
@@ -189,7 +189,7 @@ class Program
                     let match = Settings.GroupDirectoriesForChangeReport.Select(dg => dg.GetMatch(dir)).Where(m => m != null).MinElementOrDefault(s => s.Length)
                     group dir by match ?? dir into grp
                     let changeCounts = grp.Select(p => Settings.DirectoryChangeCount[p])
-                    select new { path = grp.Key, changeFreq = changeCounts.Sum(ch => ch.TimesChanged) / (double) changeCounts.Sum(ch => ch.TimesScanned) };
+                    select new { path = grp.Key, changeFreq = changeCounts.Sum(ch => ch.TimesChanged) / (double)changeCounts.Sum(ch => ch.TimesScanned) };
                 foreach (var chg in changes.OrderBy(ch => ch.changeFreq))
                     LogChange($"  {chg.path} — {chg.changeFreq:0.0%}", null);
             }
@@ -341,7 +341,7 @@ class Program
         var acl = TryCatchIo(() =>
         {
             if (src.Info is FileInfo)
-                return (FileSystemSecurity) (src.Info as FileInfo).GetAccessControl();
+                return (FileSystemSecurity)(src.Info as FileInfo).GetAccessControl();
             else
                 return (src.Info as DirectoryInfo).GetAccessControl();
         }, err => $"Unable to get {src.TypeDesc} access control ({err}): {GetOriginalSrcPath(src.Info.FullName)}");
@@ -351,9 +351,9 @@ class Program
         TryCatchIo(() =>
         {
             if (tgt.Info is FileInfo)
-                (tgt.Info as FileInfo).SetAccessControl((FileSecurity) acl);
+                (tgt.Info as FileInfo).SetAccessControl((FileSecurity)acl);
             else
-                (tgt.Info as DirectoryInfo).SetAccessControl((DirectorySecurity) acl);
+                (tgt.Info as DirectoryInfo).SetAccessControl((DirectorySecurity)acl);
         }, err => $"Unable to set {tgt.TypeDesc} access control ({err}): {tgt.Info.FullName}");
     }
 
@@ -734,7 +734,7 @@ class Program
         if (lastProgress < DateTime.UtcNow - TimeSpan.FromMilliseconds(100))
         {
             lastProgress = DateTime.UtcNow;
-            Console.Title = $"Copying {totalBytesTransferred / (double) totalFileSize * 100.0:0.0}% : {totalBytesTransferred / 1000000.0:#,0} MB of {totalFileSize / 1000000.0:#,0} MB";
+            Console.Title = $"Copying {totalBytesTransferred / (double)totalFileSize * 100.0:0.0}% : {totalBytesTransferred / 1000000.0:#,0} MB of {totalFileSize / 1000000.0:#,0} MB";
         }
         return CopyMoveProgressResult.Continue;
     }
@@ -745,8 +745,8 @@ enum ItemType { File, Dir, FileSymlink, DirSymlink, Junction }
 class Item
 {
     public FileSystemInfo Info { get; private set; }
-    public FileInfo FileInfo => (FileInfo) Info;
-    public DirectoryInfo DirInfo => (DirectoryInfo) Info;
+    public FileInfo FileInfo => (FileInfo)Info;
+    public DirectoryInfo DirInfo => (DirectoryInfo)Info;
     public ItemType Type { get; private set; }
     public string LinkTarget { get; private set; } // null if not a symlink or a junction
     public string PrintName { get; private set; } // null if not a junction
