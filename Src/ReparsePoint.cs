@@ -38,33 +38,29 @@ public static class ReparsePoint
         var mprb = &data->Anonymous.MountPointReparseBuffer;
         var nametgt = (byte*)&mprb->PathBuffer;
 
-        mprb->SubstituteNameOffset = (ushort)PtrDiff<byte>(nametgt, &mprb->PathBuffer);
-        substituteName.CopyTo(SpanFromPtrStartEnd<char>(nametgt, bufend));
+        mprb->SubstituteNameOffset = (ushort)Ptr.Diff<byte>(nametgt, &mprb->PathBuffer);
+        substituteName.CopyTo(Ptr.SpanFromPtrStartEnd<char>(nametgt, bufend));
         nametgt += substituteName.Length * 2;
         mprb->SubstituteNameLength = (ushort)(substituteName.Length * 2);
         *nametgt++ = 0; // null char terminator
         *nametgt++ = 0;
 
-        mprb->PrintNameOffset = (ushort)PtrDiff<byte>(nametgt, &mprb->PathBuffer);
-        printName.CopyTo(SpanFromPtrStartEnd<char>(nametgt, bufend));
+        mprb->PrintNameOffset = (ushort)Ptr.Diff<byte>(nametgt, &mprb->PathBuffer);
+        printName.CopyTo(Ptr.SpanFromPtrStartEnd<char>(nametgt, bufend));
         nametgt += printName.Length * 2;
         mprb->PrintNameLength = (ushort)(printName.Length * 2);
         *nametgt++ = 0; // null char terminator
         *nametgt++ = 0;
 
-        data->ReparseDataLength = (ushort)PtrDiff<byte>(nametgt, mprb);
+        data->ReparseDataLength = (ushort)Ptr.Diff<byte>(nametgt, mprb);
 
         using var handle = OpenReparsePoint(junctionPoint, GENERIC_ACCESS_RIGHTS.GENERIC_WRITE);
         uint bytesReturned;
-        uint buflen = (uint)PtrDiff<byte>(nametgt, buf);
+        uint buflen = (uint)Ptr.Diff<byte>(nametgt, buf);
         bool result = PInvoke.DeviceIoControl(handle, PInvoke.FSCTL_SET_REPARSE_POINT, buf, buflen, null, 0, &bytesReturned, null);
         if (!result)
             throw new Win32Exception();
     }
-
-    private static unsafe int PtrDiff<T>(void* p1, void* p2) where T : unmanaged => (int)((T*)p1 - (T*)p2);
-    private static unsafe Span<T> SpanFromPtrStartEnd<T>(void* start, void* end) where T : unmanaged => new Span<T>(start, PtrDiff<T>(end, start));
-    private static unsafe Span<T> SpanFromPtrAndByteLength<T>(void* start, int byteLen) where T : unmanaged => new Span<T>(start, byteLen / sizeof(T));
 
     /// <summary>
     /// Deletes only the reparse point data for a junction. Does not delete the target path.
@@ -117,14 +113,14 @@ public static class ReparsePoint
         if (res.IsJunction)
         {
             var mprb = &data->Anonymous.MountPointReparseBuffer;
-            var mprbuf = SpanFromPtrAndByteLength<char>(&mprb->PathBuffer, data->ReparseDataLength);
+            var mprbuf = Ptr.SpanFromPtrAndByteLength<char>(&mprb->PathBuffer, data->ReparseDataLength);
             res.SubstituteName = new string(mprbuf[(mprb->SubstituteNameOffset / 2)..][..(mprb->SubstituteNameLength / 2)]);
             res.PrintName = new string(mprbuf[(mprb->PrintNameOffset / 2)..][..(mprb->PrintNameLength / 2)]);
         }
         else if (res.IsSymlink)
         {
             var slrb = &data->Anonymous.SymbolicLinkReparseBuffer;
-            var slrbuf = SpanFromPtrAndByteLength<char>(&slrb->PathBuffer, data->ReparseDataLength);
+            var slrbuf = Ptr.SpanFromPtrAndByteLength<char>(&slrb->PathBuffer, data->ReparseDataLength);
             res.SubstituteName = new string(slrbuf[(slrb->SubstituteNameOffset / 2)..][..(slrb->SubstituteNameLength / 2)]);
             res.PrintName = new string(slrbuf[(slrb->PrintNameOffset / 2)..][..(slrb->PrintNameLength / 2)]);
             res.Flags = slrb->Flags;

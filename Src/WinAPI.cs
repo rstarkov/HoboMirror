@@ -65,7 +65,7 @@ static class WinAPI
 
         for (int i = 0; i < returnLen;)
         {
-            var str = SpanFromNullStr(buf + i);
+            var str = Ptr.SpanFromNullStr(buf + i);
             if (str.Length == 0) break; // double terminator for lists
             i += str.Length + 1; // incl null terminator
             names.Add(str.ToString());
@@ -93,13 +93,6 @@ static class WinAPI
         if (!PInvoke.GetVolumePathName(path, result))
             throw new Win32Exception();
         return Ptr.SpanFromNullStr(result).ToString();
-    }
-
-    private static unsafe ReadOnlySpan<char> SpanFromNullStr(char* str) => MemoryMarshal.CreateReadOnlySpanFromNullTerminated(str);
-    private static unsafe ReadOnlySpan<char> SpanFromNullStr(Span<char> str)
-    {
-        fixed (char* p = str)
-            return MemoryMarshal.CreateReadOnlySpanFromNullTerminated(p);
     }
 }
 

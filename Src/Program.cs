@@ -408,7 +408,7 @@ class Program
                     LogAction($"Ignoring path: {GetOriginalSrcPath(srcItem.Info.FullName)}");
                     srcDict.Remove(srcItem.Info.Name);
                 }
-                else if (srcItem.Type == ItemType.Dir && Settings.IgnoreDirNames.Any(ignore => ignore.EqualsNoCase(srcItem.DirInfo.Name)))
+                else if (srcItem.Type == ItemType.Dir && Settings.IgnoreDirNames.Any(ignore => ignore.EqualsIgnoreCase(srcItem.DirInfo.Name)))
                 {
                     LogAction($"Ignoring directory name: {GetOriginalSrcPath(srcItem.Info.FullName)}");
                     srcDict.Remove(srcItem.Info.Name);
