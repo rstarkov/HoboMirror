@@ -1,6 +1,7 @@
 ﻿using System.ComponentModel;
 using System.Runtime.InteropServices;
 using Microsoft.Win32.SafeHandles;
+using RT.Util.ExtensionMethods;
 using Windows.Win32;
 using Windows.Win32.Foundation;
 using Windows.Win32.Security;
@@ -48,6 +49,46 @@ static class WinAPI
     }
 
     public static WIN32_ERROR GetLastError() => (WIN32_ERROR)Marshal.GetLastWin32Error();
+
+    /// <summary>
+    ///     Returns all volume mount paths for the given volume GUID path. Note that there may be none, in which case the
+    ///     volume is only accessible via its volume GUID path. Throws for mount paths (must be a GUID path).</summary>
+    public static unsafe List<string> GetVolumeMountPaths(string volumeGuidPath)
+    {
+        const int bufchars = 4096;
+        char* buf = stackalloc char[bufchars];
+
+        if (!PInvoke.GetVolumePathNamesForVolumeName(volumeGuidPath, buf, bufchars, out var returnLen))
+            throw new Win32Exception();
+
+        var names = new List<string>();
+
+        for (int i = 0; i < returnLen;)
+        {
+            var str = SpanFromNullStr(buf + i);
+            if (str.Length == 0) break; // double terminator for lists
+            i += str.Length + 1; // incl null terminator
+            names.Add(str.ToString());
+        }
+
+        return names;
+    }
+
+    /// <summary>Returns the shortest volume mount path for the given volume GUID path, or null if there are no mount paths.</summary>
+    public static string GetVolumeMountPath(string volumeGuidPath)
+    {
+        var paths = GetVolumeMountPaths(volumeGuidPath);
+        if (paths.Count == 0)
+            return null;
+        return paths.MinElement(p => p.Length);
+    }
+
+    private static unsafe ReadOnlySpan<char> SpanFromNullStr(char* str) => MemoryMarshal.CreateReadOnlySpanFromNullTerminated(str);
+    private static unsafe ReadOnlySpan<char> SpanFromNullStr(Span<char> str)
+    {
+        fixed (char* p = str)
+            return MemoryMarshal.CreateReadOnlySpanFromNullTerminated(p);
+    }
 }
 
 enum PrivilegeName

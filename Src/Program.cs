@@ -1,13 +1,8 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Collections.ObjectModel;
-using System.ComponentModel;
-using System.Linq;
+﻿using System.ComponentModel;
 using System.Reflection;
 using System.Security.AccessControl;
 using System.Text;
 using System.Text.RegularExpressions;
-using Alphaleonis.Win32.Filesystem;
 using RT.CommandLine;
 using RT.PostBuild;
 using RT.Serialization;
@@ -147,10 +142,10 @@ class Program
             var volumes = tasks.GroupBy(t => t.FromVolume).Select(g => g.Key).ToArray();
             using (var vsc = UseVolumeShadowCopy ? new VolumeShadowCopy(volumes) : null)
             {
-                var vscVolumes = UseVolumeShadowCopy ? vsc.Volumes : new ReadOnlyDictionary<string, VolumeShadowCopyVol>(volumes.ToDictionary(vol => vol, vol => new VolumeShadowCopyVol { Path = vol, SnapshotPath = vol }));
+                var sourcePaths = UseVolumeShadowCopy ? vsc.Snapshots.ToDictionary(kvp => kvp.Key, kvp => kvp.Value.SnapshotPath) : volumes.ToDictionary(vol => vol, vol => vol);
                 foreach (var task in tasks)
                 {
-                    var fromPath = Path.Combine(vscVolumes[task.FromVolume].SnapshotPath, task.FromPath.Substring(task.FromVolume.Length));
+                    var fromPath = Path.Combine(sourcePaths[task.FromVolume], task.FromPath.Substring(task.FromVolume.Length));
                     LogAll($"    Mirror task: from “{task.FromPath}” to “{task.ToPath}” (volume snapshot path: {fromPath})");
                 }
                 foreach (var ignore in Args.IgnorePath.Concat(Settings.IgnorePaths).Order())
@@ -160,10 +155,10 @@ class Program
 
                 foreach (var task in tasks)
                 {
-                    GetOriginalSrcPath = str => str.Replace(vscVolumes[task.FromVolume].SnapshotPath, task.FromVolume).Replace(@"\\", @"\");
+                    GetOriginalSrcPath = str => str.Replace(sourcePaths[task.FromVolume], task.FromVolume).Replace(@"\\", @"\");
                     if (!Directory.Exists(task.ToPath))
                         ActCreateDirectory(task.ToPath);
-                    var srcItem = new Item(new DirectoryInfo(Path.Combine(vscVolumes[task.FromVolume].SnapshotPath, task.FromPath.Substring(task.FromVolume.Length))), ItemType.Dir);
+                    var srcItem = new Item(new DirectoryInfo(Path.Combine(sourcePaths[task.FromVolume], task.FromPath.Substring(task.FromVolume.Length))), ItemType.Dir);
                     var tgtItem = CreateItem(new DirectoryInfo(task.ToPath));
                     if (tgtItem != null)
                         SyncDir(srcItem, tgtItem);
