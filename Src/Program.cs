@@ -2,7 +2,6 @@
 using System.Reflection;
 using System.Security.AccessControl;
 using System.Text;
-using System.Text.RegularExpressions;
 using RT.CommandLine;
 using RT.PostBuild;
 using RT.Serialization;
@@ -101,10 +100,7 @@ class Program
                 FromPath = from,
                 ToPath = to,
                 ToGuard = Path.Combine(to, "__HoboMirrorTarget__.txt"),
-                FromVolume =
-                    Regex.Match(from, @"^\\\\\?\\Volume{[^}]+}\\").Apply(match => match.Success ? match.Groups[0].Value : null)
-                    ?? Regex.Match(from, @"^\w:\\").Apply(match => match.Success ? match.Groups[0].Value : null)
-                    ?? throw new InvalidOperationException($"Expected absolute path: {from}") // this should be taken care of by the CmdLine specification, so throw here
+                FromVolume = WinAPI.GetVolumeForPath(from),
             });
 
             // Log header

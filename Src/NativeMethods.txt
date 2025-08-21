@@ -18,4 +18,5 @@ SetFileInformationByHandle
 FILE_BASIC_INFO
 FILE_DISPOSITION_INFORMATION_EX
 CopyFile2
+GetVolumePathName
 GetVolumePathNamesForVolumeName

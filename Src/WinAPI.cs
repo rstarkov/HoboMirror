@@ -83,6 +83,18 @@ static class WinAPI
         return paths.MinElement(p => p.Length);
     }
 
+    /// <summary>
+    ///     Gets a volume mount point path for the given path. Works for non-existent paths so long as a parent path is a
+    ///     valid volume. Don't pass relative paths. Don't use on SUBST drives as the results are incorrect. Works for C:\ and
+    ///     C:. If mounted at C:\Mnt\Foo, passing "C:\Mnt\Foo" without the trailing slash returns "C:\Mnt\Foo\", not C:</summary>
+    public static unsafe string GetVolumeForPath(string path)
+    {
+        Span<char> result = stackalloc char[4096];
+        if (!PInvoke.GetVolumePathName(path, result))
+            throw new Win32Exception();
+        return Ptr.SpanFromNullStr(result).ToString();
+    }
+
     private static unsafe ReadOnlySpan<char> SpanFromNullStr(char* str) => MemoryMarshal.CreateReadOnlySpanFromNullTerminated(str);
     private static unsafe ReadOnlySpan<char> SpanFromNullStr(Span<char> str)
     {
