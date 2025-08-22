@@ -1,4 +1,4 @@
-using System.ComponentModel;
+﻿using System.ComponentModel;
 using System.Runtime.InteropServices;
 using Windows.Wdk.Storage.FileSystem;
 using Windows.Win32;
@@ -17,7 +17,7 @@ static class Filesys
     ///     SeBackup/SeRestore). For reparse points, reads the reparse point itself, not its target.</summary>
     public static unsafe FILE_BASIC_INFO GetTimestampsAndAttributes(string path)
     {
-        using var handle = PInvoke.CreateFile(path, (uint)FILE_ACCESS_RIGHTS.FILE_READ_ATTRIBUTES, FileShareAll, null, FileDispExisting, Semantics, null);
+        using var handle = WinAPI.CreateFile(path, (uint)FILE_ACCESS_RIGHTS.FILE_READ_ATTRIBUTES, FileShareAll, null, FileDispExisting, Semantics, null);
         if (WinAPI.GetLastError() != 0) throw new Win32Exception();
         FILE_BASIC_INFO info;
         PInvoke.GetFileInformationByHandleEx(handle, FILE_INFO_BY_HANDLE_CLASS.FileBasicInfo, &info, (uint)Marshal.SizeOf<FILE_BASIC_INFO>());
@@ -30,7 +30,7 @@ static class Filesys
     ///     SeBackup/SeRestore). For reparse points, updates the reparse point itself, not its target.</summary>
     public static unsafe void SetTimestampsAndAttributes(string path, FILE_BASIC_INFO info)
     {
-        using var handle = PInvoke.CreateFile(path, (uint)FILE_ACCESS_RIGHTS.FILE_WRITE_ATTRIBUTES, FileShareAll, null, FileDispExisting, Semantics, null);
+        using var handle = WinAPI.CreateFile(path, (uint)FILE_ACCESS_RIGHTS.FILE_WRITE_ATTRIBUTES, FileShareAll, null, FileDispExisting, Semantics, null);
         if (WinAPI.GetLastError() != 0) throw new Win32Exception();
         PInvoke.SetFileInformationByHandle(handle, FILE_INFO_BY_HANDLE_CLASS.FileBasicInfo, &info, (uint)Marshal.SizeOf<FILE_BASIC_INFO>());
         if (WinAPI.GetLastError() != 0) throw new Win32Exception();
@@ -43,7 +43,7 @@ static class Filesys
     ///     non-empty directories (throws).</summary>
     public static unsafe void Delete(string path)
     {
-        using var handle = PInvoke.CreateFile(path, (uint)FILE_ACCESS_RIGHTS.DELETE, FileShareAll, null, FileDispExisting, Semantics, null);
+        using var handle = WinAPI.CreateFile(path, (uint)FILE_ACCESS_RIGHTS.DELETE, FileShareAll, null, FileDispExisting, Semantics, null);
         if (WinAPI.GetLastError() != 0) throw new Win32Exception();
 
         FILE_DISPOSITION_INFORMATION_EX info;

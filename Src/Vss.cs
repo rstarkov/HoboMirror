@@ -96,7 +96,7 @@ class VolumeShadowCopy : IDisposable
             return;
         foreach (var snap in Snapshots.Values)
         {
-            Program.LogAction($"Deleting VSS snapshot: {snap.Id} for {snap.VolumeGuidPath}");
+            Program.LogAction($"Deleting VSS snapshot: {snap.Id} for {snap.VolumeDisplayPath}");
             snap.Delete();
             Program.LogAction("   done.");
         }

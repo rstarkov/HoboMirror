@@ -131,7 +131,7 @@ public static class ReparsePoint
 
     private static SafeFileHandle OpenReparsePoint(string reparsePoint, GENERIC_ACCESS_RIGHTS accessMode)
     {
-        var reparsePointHandle = PInvoke.CreateFile(reparsePoint, (uint)accessMode,
+        var reparsePointHandle = WinAPI.CreateFile(reparsePoint, (uint)accessMode,
             FILE_SHARE_MODE.FILE_SHARE_READ | FILE_SHARE_MODE.FILE_SHARE_WRITE | FILE_SHARE_MODE.FILE_SHARE_DELETE,
             null, FILE_CREATION_DISPOSITION.OPEN_EXISTING,
             FILE_FLAGS_AND_ATTRIBUTES.FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAGS_AND_ATTRIBUTES.FILE_FLAG_OPEN_REPARSE_POINT, null);
