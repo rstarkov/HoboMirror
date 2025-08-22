@@ -2,6 +2,7 @@
 using System.Reflection;
 using System.Security.AccessControl;
 using System.Text;
+using System.Text.RegularExpressions;
 using RT.CommandLine;
 using RT.PostBuild;
 using RT.Serialization;
@@ -154,8 +155,8 @@ class Program
                     GetOriginalSrcPath = str => str.Replace(sourcePaths[task.FromVolume], task.FromVolume).Replace(@"\\", @"\");
                     if (!Directory.Exists(task.ToPath))
                         ActCreateDirectory(task.ToPath);
-                    var srcItem = new Item(new DirectoryInfo(Path.Combine(sourcePaths[task.FromVolume], task.FromPath.Substring(task.FromVolume.Length))), ItemType.Dir);
-                    var tgtItem = CreateItem(new DirectoryInfo(task.ToPath));
+                    var srcItem = new Item(newDirectoryInfo(Path.Combine(sourcePaths[task.FromVolume], task.FromPath.Substring(task.FromVolume.Length))), ItemType.Dir);
+                    var tgtItem = CreateItem(newDirectoryInfo(task.ToPath));
                     if (tgtItem != null)
                         SyncDir(srcItem, tgtItem);
                     else
@@ -631,7 +632,7 @@ class Program
     private static void ActCopyDirectory(Item srcItem, string tgtFullName)
     {
         ActCreateDirectory(tgtFullName);
-        var tgtItem = CreateItem(new DirectoryInfo(tgtFullName));
+        var tgtItem = CreateItem(newDirectoryInfo(tgtFullName));
         if (tgtItem == null)
         {
             LogError($"Unable to copy directory: {GetOriginalSrcPath(srcItem.DirInfo.FullName)}");
@@ -703,11 +704,24 @@ class Program
     private static FileSystemInfo CreateInfo(ItemType type, string fullPath)
     {
         if (type == ItemType.Dir || type == ItemType.DirSymlink || type == ItemType.Junction)
-            return new DirectoryInfo(fullPath);
+            return newDirectoryInfo(fullPath);
         else if (type == ItemType.File || type == ItemType.FileSymlink)
             return new FileInfo(fullPath);
         else
             throw new Exception("unreachable 52210");
+    }
+
+    /// <summary>Workaround for https://github.com/dotnet/runtime/issues/119009</summary>
+    private static DirectoryInfo newDirectoryInfo(string path)
+    {
+        const string vssPrefix = @"\\?\GLOBALROOT\Device\HarddiskVolumeShadowCopy";
+        if (path.StartsWith(vssPrefix, StringComparison.OrdinalIgnoreCase))
+        {
+            var match = Regex.Match(path[vssPrefix.Length..], @"^[^\\]*(\\)?$");
+            if (match.Success)
+                return new DirectoryInfo(path + (match.Groups[1].Success ? @"\" : @"\\"));
+        }
+        return new DirectoryInfo(path);
     }
 
     private static DateTime lastProgress;
