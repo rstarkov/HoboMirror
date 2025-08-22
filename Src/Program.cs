@@ -372,8 +372,8 @@ class Program
 
     /// <summary>
     ///     Compares paths for equality, ignoring differences in case, slash type, and trailing slash presence. Does not
-    ///     ignore differences due to relative path (non-)expansion, different Windows prefixes (/??/, //?/ etc),
-    ///     different ways to refer to the same filesystem (drive letter, junction mount point, volume ID).</summary>
+    ///     ignore differences due to relative path (non-)expansion, different Windows prefixes (/??/, //?/ etc), different
+    ///     ways to refer to the same filesystem (drive letter, junction mount point, volume ID).</summary>
     private static bool PathsEqual(string path1, string path2)
     {
         path1 = path1.Replace('/', '\\').WithSlash();
@@ -520,8 +520,8 @@ class Program
     }
 
     /// <summary>
-    ///     Compares source and target file, detects/logs changes, and updates target to match source if necessary.
-    ///     Assumes that both the source and the target exist, and that both are files.</summary>
+    ///     Compares source and target file, detects/logs changes, and updates target to match source if necessary. Assumes
+    ///     that both the source and the target exist, and that both are files.</summary>
     private static void SyncFile(Item src, Item tgt)
     {
         if (src.FileInfo.LastWriteTimeUtc == tgt.FileInfo.LastWriteTimeUtc && src.FileInfo.Length == tgt.FileInfo.Length)
@@ -531,8 +531,8 @@ class Program
     }
 
     /// <summary>
-    ///     Compares source and target file symlinks, detects/logs changes, and updates target to match source if
-    ///     necessary. Assumes that both the source and the target exist, and that both are file symlinks.</summary>
+    ///     Compares source and target file symlinks, detects/logs changes, and updates target to match source if necessary.
+    ///     Assumes that both the source and the target exist, and that both are file symlinks.</summary>
     private static void SyncFileSymlink(Item src, Item tgt)
     {
         if (src.LinkTarget == tgt.LinkTarget)
@@ -642,9 +642,9 @@ class Program
     }
 
     /// <summary>
-    ///     Copies a file to the specified path. Always copies to a temporary file in the target directory first, followed
-    ///     by a rename, to avoid errors leaving a half finished file looking like the real thing. Unlike other "act"
-    ///     methods, this method allows the target file to already exist, and will replace it on successful copy.</summary>
+    ///     Copies a file to the specified path. Always copies to a temporary file in the target directory first, followed by
+    ///     a rename, to avoid errors leaving a half finished file looking like the real thing. Unlike other "act" methods,
+    ///     this method allows the target file to already exist, and will replace it on successful copy.</summary>
     private static void ActCopyOrReplaceFile(FileInfo src, string tgtFullName)
     {
         var tgtTemp = Path.Combine(Path.GetDirectoryName(tgtFullName), $"~HoboMirror-{Rnd.GenerateString(16)}.tmp");
@@ -676,10 +676,10 @@ class Program
     }
 
     /// <summary>
-    ///     Safely enumerates the contents of a directory. If completely unable to enumerate, logs the error as
-    ///     appropriate and returns null (which the caller is expected to handle by skipping whatever they were going to
-    ///     do with this list). If able to enumerate, will safely obtain additional info about every entry, skipping those
-    ///     that fail and logging errors as appropriate.</summary>
+    ///     Safely enumerates the contents of a directory. If completely unable to enumerate, logs the error as appropriate
+    ///     and returns null (which the caller is expected to handle by skipping whatever they were going to do with this
+    ///     list). If able to enumerate, will safely obtain additional info about every entry, skipping those that fail and
+    ///     logging errors as appropriate.</summary>
     private static Item[] GetDirectoryItems(DirectoryInfo dir)
     {
         var infos = TryCatchIo(() => dir.GetFileSystemInfos(), err => $"Unable to list directory ({err}): {dir.FullName}");
@@ -689,9 +689,9 @@ class Program
     }
 
     /// <summary>
-    ///     Determines what type of item this filesystem entry is, while handling any potential errors. On failure, logs
-    ///     an appropriate message and returns null (which the caller is expected to handle by skipping whatever they were
-    ///     going to do with this item).</summary>
+    ///     Determines what type of item this filesystem entry is, while handling any potential errors. On failure, logs an
+    ///     appropriate message and returns null (which the caller is expected to handle by skipping whatever they were going
+    ///     to do with this item).</summary>
     /// <remarks>
     ///     Note that instantiating a <see cref="FileInfo"/> or <see cref="DirectoryInfo"/> is safe and will not throw, so
     ///     only this step needs to be wrapped in an error handler.</remarks>
@@ -792,8 +792,8 @@ class Item
     }
 
     /// <summary>
-    ///     Helps create an instance for the shadow copy of the root of a volume, which presents as a reparse point but
-    ///     must be treated like a directory.</summary>
+    ///     Helps create an instance for the shadow copy of the root of a volume, which presents as a reparse point but must
+    ///     be treated like a directory.</summary>
     public Item(FileSystemInfo info, ItemType type)
     {
         Info = info;
