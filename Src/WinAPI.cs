@@ -1,4 +1,4 @@
-﻿using System.ComponentModel;
+using System.ComponentModel;
 using System.Runtime.InteropServices;
 using Microsoft.Win32.SafeHandles;
 using RT.Util.ExtensionMethods;
@@ -96,11 +96,15 @@ static class WinAPI
         return Ptr.SpanFromNullStr(result).ToString();
     }
 
+    /// <summary>Calls PInvoke.CreateFile. Handles long paths, and ensures the handle is valid or throws.</summary>
     public static unsafe SafeFileHandle CreateFile(string lpFileName, uint dwDesiredAccess, FILE_SHARE_MODE dwShareMode, SECURITY_ATTRIBUTES? lpSecurityAttributes, FILE_CREATION_DISPOSITION dwCreationDisposition, FILE_FLAGS_AND_ATTRIBUTES dwFlagsAndAttributes, SafeHandle hTemplateFile)
     {
         if (lpFileName.Length >= 260 && !lpFileName.StartsWith(@"\"))
             lpFileName = @"\\?\" + Path.GetFullPath(lpFileName);
-        return PInvoke.CreateFile(lpFileName, dwDesiredAccess, dwShareMode, lpSecurityAttributes, dwCreationDisposition, dwFlagsAndAttributes, hTemplateFile);
+        var handle = PInvoke.CreateFile(lpFileName, dwDesiredAccess, dwShareMode, lpSecurityAttributes, dwCreationDisposition, dwFlagsAndAttributes, hTemplateFile);
+        if (handle.IsInvalid)
+            throw new Win32Exception();
+        return handle;
     }
 }
 

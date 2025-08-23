@@ -18,10 +18,9 @@ static class Filesys
     public static unsafe FILE_BASIC_INFO GetTimestampsAndAttributes(string path)
     {
         using var handle = WinAPI.CreateFile(path, (uint)FILE_ACCESS_RIGHTS.FILE_READ_ATTRIBUTES, FileShareAll, null, FileDispExisting, Semantics, null);
-        if (WinAPI.GetLastError() != 0) throw new Win32Exception();
         FILE_BASIC_INFO info;
-        PInvoke.GetFileInformationByHandleEx(handle, FILE_INFO_BY_HANDLE_CLASS.FileBasicInfo, &info, (uint)Marshal.SizeOf<FILE_BASIC_INFO>());
-        if (WinAPI.GetLastError() != 0) throw new Win32Exception();
+        if (!PInvoke.GetFileInformationByHandleEx(handle, FILE_INFO_BY_HANDLE_CLASS.FileBasicInfo, &info, (uint)Marshal.SizeOf<FILE_BASIC_INFO>()))
+            throw new Win32Exception();
         return info;
     }
 
@@ -31,9 +30,8 @@ static class Filesys
     public static unsafe void SetTimestampsAndAttributes(string path, FILE_BASIC_INFO info)
     {
         using var handle = WinAPI.CreateFile(path, (uint)FILE_ACCESS_RIGHTS.FILE_WRITE_ATTRIBUTES, FileShareAll, null, FileDispExisting, Semantics, null);
-        if (WinAPI.GetLastError() != 0) throw new Win32Exception();
-        PInvoke.SetFileInformationByHandle(handle, FILE_INFO_BY_HANDLE_CLASS.FileBasicInfo, &info, (uint)Marshal.SizeOf<FILE_BASIC_INFO>());
-        if (WinAPI.GetLastError() != 0) throw new Win32Exception();
+        if (!PInvoke.SetFileInformationByHandle(handle, FILE_INFO_BY_HANDLE_CLASS.FileBasicInfo, &info, (uint)Marshal.SizeOf<FILE_BASIC_INFO>()))
+            throw new Win32Exception();
     }
 
     /// <summary>
@@ -44,12 +42,10 @@ static class Filesys
     public static unsafe void Delete(string path)
     {
         using var handle = WinAPI.CreateFile(path, (uint)FILE_ACCESS_RIGHTS.DELETE, FileShareAll, null, FileDispExisting, Semantics, null);
-        if (WinAPI.GetLastError() != 0) throw new Win32Exception();
-
         FILE_DISPOSITION_INFORMATION_EX info;
         info.Flags = FILE_DISPOSITION_INFORMATION_EX_FLAGS.FILE_DISPOSITION_DELETE | FILE_DISPOSITION_INFORMATION_EX_FLAGS.FILE_DISPOSITION_IGNORE_READONLY_ATTRIBUTE;
-        PInvoke.SetFileInformationByHandle(handle, FILE_INFO_BY_HANDLE_CLASS.FileDispositionInfoEx, &info, (uint)Marshal.SizeOf<FILE_DISPOSITION_INFORMATION_EX>());
-        if (WinAPI.GetLastError() != 0) throw new Win32Exception();
+        if (!PInvoke.SetFileInformationByHandle(handle, FILE_INFO_BY_HANDLE_CLASS.FileDispositionInfoEx, &info, (uint)Marshal.SizeOf<FILE_DISPOSITION_INFORMATION_EX>()))
+            throw new Win32Exception();
     }
 
     /// <summary>Does NOT use backup semantics (todo).</summary>

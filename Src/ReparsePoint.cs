@@ -57,14 +57,11 @@ public static class ReparsePoint
         using var handle = OpenReparsePoint(junctionPoint, GENERIC_ACCESS_RIGHTS.GENERIC_WRITE);
         uint bytesReturned;
         uint buflen = (uint)Ptr.Diff<byte>(nametgt, buf);
-        bool result = PInvoke.DeviceIoControl(handle, PInvoke.FSCTL_SET_REPARSE_POINT, buf, buflen, null, 0, &bytesReturned, null);
-        if (!result)
+        if (!PInvoke.DeviceIoControl(handle, PInvoke.FSCTL_SET_REPARSE_POINT, buf, buflen, null, 0, &bytesReturned, null))
             throw new Win32Exception();
     }
 
-    /// <summary>
-    /// Deletes only the reparse point data for a junction. Does not delete the target path.
-    /// </summary>
+    /// <summary>Deletes only the reparse point data for a junction. Does not delete the target path.</summary>
     public static unsafe void DeleteJunctionData(string junctionPoint)
     {
         var data = new REPARSE_DATA_BUFFER();
@@ -72,8 +69,7 @@ public static class ReparsePoint
         data.ReparseDataLength = 0;
         using var handle = OpenReparsePoint(junctionPoint, GENERIC_ACCESS_RIGHTS.GENERIC_WRITE);
         uint bytesReturned;
-        bool result = PInvoke.DeviceIoControl(handle, PInvoke.FSCTL_DELETE_REPARSE_POINT, &data, 8, null, 0, &bytesReturned, null);
-        if (!result)
+        if (!PInvoke.DeviceIoControl(handle, PInvoke.FSCTL_DELETE_REPARSE_POINT, &data, 8, null, 0, &bytesReturned, null))
             throw new Win32Exception();
     }
 
@@ -89,9 +85,7 @@ public static class ReparsePoint
         public bool IsSymlinkRelative => IsSymlink && (Flags & 1) != 0;
     }
 
-    /// <summary>
-    /// Returns null only if the specified path exists and is not a reparse point. Throws for other errors.
-    /// </summary>
+    /// <summary>Returns null only if the specified path exists and is not a reparse point. Throws for other errors.</summary>
     public static unsafe ReparsePointInfo GetTarget(string junctionPoint)
     {
         using var handle = OpenReparsePoint(junctionPoint, GENERIC_ACCESS_RIGHTS.GENERIC_READ);
@@ -135,9 +129,6 @@ public static class ReparsePoint
             FILE_SHARE_MODE.FILE_SHARE_READ | FILE_SHARE_MODE.FILE_SHARE_WRITE | FILE_SHARE_MODE.FILE_SHARE_DELETE,
             null, FILE_CREATION_DISPOSITION.OPEN_EXISTING,
             FILE_FLAGS_AND_ATTRIBUTES.FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAGS_AND_ATTRIBUTES.FILE_FLAG_OPEN_REPARSE_POINT, null);
-
-        if (WinAPI.GetLastError() != 0)
-            throw new Win32Exception();
 
         return reparsePointHandle;
     }
