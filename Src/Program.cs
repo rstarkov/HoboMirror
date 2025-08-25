@@ -657,21 +657,9 @@ class Program
         if (!success)
             return;
 
-        success = TryCatchIo(() =>
-        {
-            if (File.Exists(tgtFullName))
-            {
-                LogAction($"Delete old version of this file: {tgtFullName}");
-                Filesys.Delete(tgtFullName);
-            }
-            return true;
-        }, err => $"Unable to delete old version of this file ({err}): {tgtFullName}");
-        if (!success)
-            return;
-
         TryCatchIo(() =>
         {
-            File.Move(tgtTemp, tgtFullName, overwrite: false);
+            Filesys.Rename(tgtTemp, tgtFullName, overwrite: true);
         }, err => $"Unable to rename temp copied file to final destination ({err}): {tgtFullName}");
     }
 
@@ -725,28 +713,13 @@ class Program
     }
 
     private static DateTime lastProgress;
-    private static COPYFILE2_MESSAGE_ACTION CopyProgress(COPYFILE2_MESSAGE msg)
+    private static void CopyProgress(Filesys.CopyFileProgress msg)
     {
-        ulong totalFileSize = 0, totalBytesTransferred = 0;
-        if (msg.Type == COPYFILE2_MESSAGE_TYPE.COPYFILE2_CALLBACK_CHUNK_FINISHED)
-        {
-            totalFileSize = msg.Info.ChunkFinished.uliTotalFileSize;
-            totalBytesTransferred = msg.Info.ChunkFinished.uliTotalBytesTransferred;
-        }
-        else if (msg.Type == COPYFILE2_MESSAGE_TYPE.COPYFILE2_CALLBACK_STREAM_FINISHED)
-        {
-            totalFileSize = msg.Info.StreamFinished.uliTotalFileSize;
-            totalBytesTransferred = msg.Info.StreamFinished.uliTotalBytesTransferred;
-        }
-        else
-            return COPYFILE2_MESSAGE_ACTION.COPYFILE2_PROGRESS_CONTINUE;
-
         if (lastProgress < DateTime.UtcNow - TimeSpan.FromMilliseconds(100))
         {
             lastProgress = DateTime.UtcNow;
-            Console.Title = $"Copying {totalBytesTransferred / (double)totalFileSize * 100.0:0.0}% : {totalBytesTransferred / 1000000.0:#,0} MB of {totalFileSize / 1000000.0:#,0} MB";
+            Console.Title = $"Copying {msg.CopiedBytes / (double)msg.TotalBytes * 100.0:0.0}% : {msg.CopiedBytes / 1000000.0:#,0} MB of {msg.TotalBytes / 1000000.0:#,0} MB";
         }
-        return COPYFILE2_MESSAGE_ACTION.COPYFILE2_PROGRESS_CONTINUE;
     }
 }
 

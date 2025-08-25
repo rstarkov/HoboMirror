@@ -16,7 +16,11 @@ IO_REPARSE_TAG_SYMLINK
 GetFileInformationByHandleEx
 SetFileInformationByHandle
 FILE_BASIC_INFO
+FILE_RENAME_INFO
 FILE_DISPOSITION_INFORMATION_EX
 CopyFile2
 GetVolumePathName
 GetVolumePathNamesForVolumeName
+ReadFile
+WriteFile
+GetFileSizeEx
