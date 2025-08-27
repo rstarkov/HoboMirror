@@ -1,5 +1,6 @@
 ﻿using System.ComponentModel;
 using System.Runtime.InteropServices;
+using System.Security.AccessControl;
 using Windows.Wdk.Storage.FileSystem;
 using Windows.Win32;
 using Windows.Win32.Foundation;
@@ -115,5 +116,32 @@ static class Filesys
     {
         public long TotalBytes;
         public long CopiedBytes;
+    }
+
+    /// <summary>Gets file security info (owner, ACLs, inheritability) in binary form. Uses backup semantics.</summary>
+    public static byte[] GetSecurityInfo(FileInfo info)
+    {
+        return info.GetAccessControl(AccessControlSections.All).GetSecurityDescriptorBinaryForm();
+    }
+    /// <summary>Gets directory security info (owner, ACLs, inheritability) in binary form. Uses backup semantics.</summary>
+    public static byte[] GetSecurityInfo(DirectoryInfo info)
+    {
+        return info.GetAccessControl(AccessControlSections.All).GetSecurityDescriptorBinaryForm();
+    }
+    /// <summary>Sets file security info (owner, ACLs, inheritability). Uses backup semantics.</summary>
+    public static void SetSecurityInfo(FileInfo info, byte[] fileSecurity)
+    {
+        var sec = new FileSecurity(); // per docs, must construct a new object otherwise nothing gets applied
+        sec.SetSecurityDescriptorBinaryForm(fileSecurity);
+        info.SetAccessControl(sec);
+    }
+    /// <summary>
+    ///     Sets directory security info (owner, ACLs, inheritability). Uses backup semantics. Appears to apply inheriable
+    ///     ACLs recursively (todo).</summary>
+    public static void SetSecurityInfo(DirectoryInfo info, byte[] fileSecurity)
+    {
+        var sec = new DirectorySecurity(); // per docs, must construct a new object otherwise nothing gets applied
+        sec.SetSecurityDescriptorBinaryForm(fileSecurity);
+        info.SetAccessControl(sec);
     }
 }

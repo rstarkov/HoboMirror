@@ -1,6 +1,5 @@
 ﻿using System.ComponentModel;
 using System.Reflection;
-using System.Security.AccessControl;
 using System.Text;
 using System.Text.RegularExpressions;
 using RT.CommandLine;
@@ -333,20 +332,24 @@ class Program
 
         var acl = TryCatchIo(() =>
         {
-            if (src.Info is FileInfo)
-                return (FileSystemSecurity)(src.Info as FileInfo).GetAccessControl();
+            if (src.Info is FileInfo fi)
+                return Filesys.GetSecurityInfo(fi);
+            else if (src.Info is DirectoryInfo di)
+                return Filesys.GetSecurityInfo(di);
             else
-                return (src.Info as DirectoryInfo).GetAccessControl();
+                throw new Exception("unreachable 24961");
         }, err => $"Unable to get {src.TypeDesc} access control ({err}): {GetOriginalSrcPath(src.Info.FullName)}");
         if (acl == null)
             return;
 
         TryCatchIo(() =>
         {
-            if (tgt.Info is FileInfo)
-                (tgt.Info as FileInfo).SetAccessControl((FileSecurity)acl);
+            if (tgt.Info is FileInfo fi)
+                Filesys.SetSecurityInfo(fi, acl);
+            else if (tgt.Info is DirectoryInfo di)
+                Filesys.SetSecurityInfo(di, acl);
             else
-                (tgt.Info as DirectoryInfo).SetAccessControl((DirectorySecurity)acl);
+                throw new Exception("unreachable 16943");
         }, err => $"Unable to set {tgt.TypeDesc} access control ({err}): {tgt.Info.FullName}");
     }
 
