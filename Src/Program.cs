@@ -478,11 +478,11 @@ class Program
                 else if (srcItem.Type == ItemType.File)
                     ActCopyOrReplaceFile(srcItem.FileInfo, tgtFullName);
                 else if (srcItem.Type == ItemType.FileSymlink)
-                    ActCreateFileSymlink(tgtFullName, srcItem.LinkTarget);
+                    ActCreateFileSymlink(tgtFullName, srcItem.Reparse);
                 else if (srcItem.Type == ItemType.DirSymlink)
-                    ActCreateDirSymlink(tgtFullName, srcItem.LinkTarget);
+                    ActCreateDirSymlink(tgtFullName, srcItem.Reparse);
                 else if (srcItem.Type == ItemType.Junction)
-                    ActCreateJunction(tgtFullName, srcItem.LinkTarget, srcItem.PrintName);
+                    ActCreateJunction(tgtFullName, srcItem.Reparse);
                 else
                     throw new Exception("unreachable 49612");
                 var tgtItem = CreateItem(CreateInfo(srcItem.Type, tgtFullName));
@@ -538,11 +538,13 @@ class Program
     ///     Assumes that both the source and the target exist, and that both are file symlinks.</summary>
     private static void SyncFileSymlink(Item src, Item tgt)
     {
-        if (src.LinkTarget == tgt.LinkTarget)
+        var srcR = src.Reparse;
+        var tgtR = tgt.Reparse;
+        if (srcR.SubstituteName == tgtR.SubstituteName && srcR.PrintName == tgtR.PrintName && srcR.IsSymlinkRelative == tgtR.IsSymlinkRelative)
             return;
-        LogChange($"Found a modified {src.TypeDesc}: ", GetOriginalSrcPath(src.FileInfo.FullName), whatChanged: $"\r\n    target: {tgt.LinkTarget} -> {src.LinkTarget}");
+        LogChange($"Found a modified {src.TypeDesc}: ", GetOriginalSrcPath(src.FileInfo.FullName), whatChanged: $"\r\n    target: {tgtR.SubstituteName} -> {srcR.SubstituteName}\r\n    print name: {tgtR.PrintName} -> {srcR.PrintName}\r\n    relative: {tgtR.IsSymlinkRelative} -> {srcR.IsSymlinkRelative}");
         ActDelete(tgt);
-        ActCreateFileSymlink(tgt.FileInfo.FullNameWithName(src.FileInfo.Name), src.LinkTarget);
+        ActCreateFileSymlink(tgt.FileInfo.FullNameWithName(src.FileInfo.Name), srcR);
     }
 
     /// <summary>
@@ -550,11 +552,13 @@ class Program
     ///     necessary. Assumes that both the source and the target exist, and that both are directory symlinks.</summary>
     private static void SyncDirSymlink(Item src, Item tgt)
     {
-        if (src.LinkTarget == tgt.LinkTarget)
+        var srcR = src.Reparse;
+        var tgtR = tgt.Reparse;
+        if (srcR.SubstituteName == tgtR.SubstituteName && srcR.PrintName == tgtR.PrintName && srcR.IsSymlinkRelative == tgtR.IsSymlinkRelative)
             return;
-        LogChange($"Found a modified {src.TypeDesc}: ", GetOriginalSrcPath(src.DirInfo.FullName), whatChanged: $"\r\n    target: {tgt.LinkTarget} -> {src.LinkTarget}");
+        LogChange($"Found a modified {src.TypeDesc}: ", GetOriginalSrcPath(src.DirInfo.FullName), whatChanged: $"\r\n    target: {tgtR.SubstituteName} -> {srcR.SubstituteName}\r\n    print name: {tgtR.PrintName} -> {srcR.PrintName}\r\n    relative: {tgtR.IsSymlinkRelative} -> {srcR.IsSymlinkRelative}");
         ActDelete(tgt);
-        ActCreateDirSymlink(tgt.DirInfo.FullNameWithName(src.DirInfo.Name), src.LinkTarget);
+        ActCreateDirSymlink(tgt.DirInfo.FullNameWithName(src.DirInfo.Name), srcR);
     }
 
     /// <summary>
@@ -562,11 +566,13 @@ class Program
     ///     Assumes that both the source and the target exist, and that both are junctions.</summary>
     private static void SyncJunction(Item src, Item tgt)
     {
-        if (src.LinkTarget == tgt.LinkTarget && src.PrintName == tgt.PrintName)
+        var srcR = src.Reparse;
+        var tgtR = tgt.Reparse;
+        if (srcR.SubstituteName == tgtR.SubstituteName && srcR.PrintName == tgtR.PrintName)
             return;
-        LogChange($"Found a modified {src.TypeDesc}: ", GetOriginalSrcPath(src.DirInfo.FullName), whatChanged: $"\r\n    target: {tgt.LinkTarget} -> {src.LinkTarget}\r\n    print name: {tgt.PrintName} -> {src.PrintName}");
+        LogChange($"Found a modified {src.TypeDesc}: ", GetOriginalSrcPath(src.DirInfo.FullName), whatChanged: $"\r\n    target: {tgtR.SubstituteName} -> {srcR.SubstituteName}\r\n    print name: {tgtR.PrintName} -> {srcR.PrintName}");
         ActDelete(tgt);
-        ActCreateJunction(tgt.DirInfo.FullNameWithName(src.DirInfo.Name), src.LinkTarget, src.PrintName);
+        ActCreateJunction(tgt.DirInfo.FullNameWithName(src.DirInfo.Name), srcR);
     }
 
     /// <summary>Deletes the specified item of any type. Assumes that the item exists.</summary>
@@ -599,35 +605,37 @@ class Program
     {
         TryCatchIoAction("create directory", fullName, () =>
         {
-            Directory.CreateDirectory(fullName);
+            Filesys.CreateDirectory(fullName);
         });
     }
 
     /// <summary>Creates the specified file symlink. Assumes that it doesn't exist.</summary>
-    private static void ActCreateFileSymlink(string fullName, string linkTarget)
+    private static void ActCreateFileSymlink(string fullName, ReparsePointData rpd)
     {
         TryCatchIoAction("create file-symlink", fullName, () =>
         {
-            File.CreateSymbolicLink(fullName, linkTarget.StartsWith(@"\??\Volume") ? (@"\\?\" + linkTarget.Substring(4)) : linkTarget);
+            Filesys.CreateFile(fullName);
+            ReparsePoint.SetSymlinkData(fullName, rpd.SubstituteName, rpd.PrintName, rpd.IsSymlinkRelative);
         });
     }
 
     /// <summary>Creates the specified directory symlink. Assumes that it doesn't exist.</summary>
-    private static void ActCreateDirSymlink(string fullName, string linkTarget)
+    private static void ActCreateDirSymlink(string fullName, ReparsePointData rpd)
     {
         TryCatchIoAction("create directory-symlink", fullName, () =>
         {
-            Directory.CreateSymbolicLink(fullName, linkTarget.StartsWith(@"\??\Volume") ? (@"\\?\" + linkTarget.Substring(4)) : linkTarget);
+            Filesys.CreateDirectory(fullName);
+            ReparsePoint.SetSymlinkData(fullName, rpd.SubstituteName, rpd.PrintName, rpd.IsSymlinkRelative);
         });
     }
 
     /// <summary>Creates the specified junction. Assumes that it doesn't exist.</summary>
-    private static void ActCreateJunction(string fullName, string linkTarget, string printName)
+    private static void ActCreateJunction(string fullName, ReparsePointData rpd)
     {
         TryCatchIoAction("create junction", fullName, () =>
         {
-            Directory.CreateDirectory(fullName);
-            ReparsePoint.Create(fullName, linkTarget, printName);
+            Filesys.CreateDirectory(fullName);
+            ReparsePoint.SetJunctionData(fullName, rpd.SubstituteName, rpd.PrintName);
         });
     }
 
@@ -734,27 +742,24 @@ class Item
     public FileInfo FileInfo => (FileInfo)Info;
     public DirectoryInfo DirInfo => (DirectoryInfo)Info;
     public ItemType Type { get; private set; }
-    public string LinkTarget { get; private set; } // null if not a symlink or a junction
-    public string PrintName { get; private set; } // null if not a junction
+    public ReparsePointData Reparse { get; private set; } // null if not a symlink or a junction
     public string TypeDesc => Type == ItemType.Dir ? "directory" : Type == ItemType.DirSymlink ? "directory-symlink" : Type == ItemType.File ? "file" : Type == ItemType.FileSymlink ? "file-symlink" : Type == ItemType.Junction ? "junction" : throw new Exception("unreachable 63161");
-    public override string ToString() => $"{TypeDesc}: {Info.FullName}{(LinkTarget == null ? "" : (" -> " + LinkTarget))}";
+    public override string ToString() => $"{TypeDesc}: {Info.FullName}{(Reparse == null ? "" : (" -> " + Reparse.SubstituteName))}";
 
     public Item(FileSystemInfo info)
     {
         Info = info;
-        if (info.IsReparsePoint())
+        var rp = ReparsePoint.GetReparseData(info.FullName);
+        if (rp != null)
         {
-            var rp = ReparsePoint.GetTarget(info.FullName);
+            Reparse = rp;
             if (rp.IsJunction)
             {
                 Type = ItemType.Junction;
-                LinkTarget = rp.SubstituteName;
-                PrintName = rp.PrintName;
             }
             else if (rp.IsSymlink)
             {
                 Type = info is FileInfo ? ItemType.FileSymlink : info is DirectoryInfo ? ItemType.DirSymlink : throw new Exception("unreachable 27117");
-                LinkTarget = rp.PrintName;
             }
             else
                 throw new Exception($"unrecognized reparse point type {rp.ReparseTag}");

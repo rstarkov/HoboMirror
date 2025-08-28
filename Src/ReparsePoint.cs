@@ -7,6 +7,9 @@ using Windows.Win32.Storage.FileSystem;
 
 namespace HoboMirror;
 
+/// <summary>
+///     Reparse point helpers for junctions and symlinks. All methods use backup semantics to bypass access control checks
+///     (requires SeBackup/SeRestore), and support long file paths.</summary>
 public static class ReparsePoint
 {
     public static string NiceNameToRawName(string niceName)
@@ -27,7 +30,10 @@ public static class ReparsePoint
         return rawName;
     }
 
-    public static unsafe void Create(string junctionPoint, string substituteName, string printName)
+    /// <summary>
+    ///     Sets junction reparse data on the specified directory. The path must exist, be a directory, and be empty
+    ///     (otherwise throws). Will overwrite existing junction data, but not existing symlink data (throws).</summary>
+    public static unsafe void SetJunctionData(string path, string substituteName, string printName)
     {
         const int bufsize = 0x4000;
         byte* buf = stackalloc byte[bufsize];
@@ -36,59 +42,82 @@ public static class ReparsePoint
 
         data->ReparseTag = PInvoke.IO_REPARSE_TAG_MOUNT_POINT;
         var mprb = &data->Anonymous.MountPointReparseBuffer;
-        var nametgt = (byte*)&mprb->PathBuffer;
 
-        mprb->SubstituteNameOffset = (ushort)Ptr.Diff<byte>(nametgt, &mprb->PathBuffer);
-        substituteName.CopyTo(Ptr.SpanFromPtrStartEnd<char>(nametgt, bufend));
-        nametgt += substituteName.Length * 2;
-        mprb->SubstituteNameLength = (ushort)(substituteName.Length * 2);
-        *nametgt++ = 0; // null char terminator
-        *nametgt++ = 0;
+        var bufpos = (byte*)&mprb->PathBuffer;
+        (mprb->SubstituteNameOffset, mprb->SubstituteNameLength) = writeNameToBuffer(substituteName, ref bufpos, (byte*)&mprb->PathBuffer, bufend);
+        (mprb->PrintNameOffset, mprb->PrintNameLength) = writeNameToBuffer(printName, ref bufpos, (byte*)&mprb->PathBuffer, bufend);
+        data->ReparseDataLength = (ushort)Ptr.Diff<byte>(bufpos, mprb);
 
-        mprb->PrintNameOffset = (ushort)Ptr.Diff<byte>(nametgt, &mprb->PathBuffer);
-        printName.CopyTo(Ptr.SpanFromPtrStartEnd<char>(nametgt, bufend));
-        nametgt += printName.Length * 2;
-        mprb->PrintNameLength = (ushort)(printName.Length * 2);
-        *nametgt++ = 0; // null char terminator
-        *nametgt++ = 0;
-
-        data->ReparseDataLength = (ushort)Ptr.Diff<byte>(nametgt, mprb);
-
-        using var handle = OpenReparsePoint(junctionPoint, GENERIC_ACCESS_RIGHTS.GENERIC_WRITE);
+        using var handle = openReparsePoint(path, FILE_ACCESS_RIGHTS.FILE_WRITE_ATTRIBUTES);
         uint bytesReturned;
-        uint buflen = (uint)Ptr.Diff<byte>(nametgt, buf);
+        uint buflen = (uint)Ptr.Diff<byte>(bufpos, buf);
         if (!PInvoke.DeviceIoControl(handle, PInvoke.FSCTL_SET_REPARSE_POINT, buf, buflen, null, 0, &bytesReturned, null))
             throw new Win32Exception();
     }
 
-    /// <summary>Deletes only the reparse point data for a junction. Does not delete the target path.</summary>
-    public static unsafe void DeleteJunctionData(string junctionPoint)
+    /// <summary>
+    ///     Sets junction reparse data on the specified file or directory, which must exist. If the target is a directory it
+    ///     must be empty; if it's a file it must be zero-length. Throws if the these conditions are violated. Overwrites
+    ///     existing symlink data if any, but will throw if the existing reparse point is a junction.</summary>
+    public static unsafe void SetSymlinkData(string path, string substituteName, string printName, bool relative)
+    {
+        const int bufsize = 0x4000;
+        byte* buf = stackalloc byte[bufsize];
+        byte* bufend = buf + bufsize;
+        var data = (REPARSE_DATA_BUFFER*)buf;
+
+        data->ReparseTag = PInvoke.IO_REPARSE_TAG_SYMLINK;
+        var slrb = &data->Anonymous.SymbolicLinkReparseBuffer;
+
+        var bufpos = (byte*)&slrb->PathBuffer;
+        (slrb->SubstituteNameOffset, slrb->SubstituteNameLength) = writeNameToBuffer(substituteName, ref bufpos, (byte*)&slrb->PathBuffer, bufend);
+        (slrb->PrintNameOffset, slrb->PrintNameLength) = writeNameToBuffer(printName, ref bufpos, (byte*)&slrb->PathBuffer, bufend);
+        slrb->Flags = (relative ? 1u /*SYMLINK_FLAG_RELATIVE*/ : 0u);
+        data->ReparseDataLength = (ushort)Ptr.Diff<byte>(bufpos, slrb);
+
+        using var handle = openReparsePoint(path, FILE_ACCESS_RIGHTS.FILE_WRITE_ATTRIBUTES);
+        uint bytesReturned;
+        uint buflen = (uint)Ptr.Diff<byte>(bufpos, buf);
+        if (!PInvoke.DeviceIoControl(handle, PInvoke.FSCTL_SET_REPARSE_POINT, buf, buflen, null, 0, &bytesReturned, null))
+            throw new Win32Exception();
+    }
+
+    private static unsafe (ushort offset, ushort length) writeNameToBuffer(string name, ref byte* bufpos, byte* bufstart, byte* bufend)
+    {
+        var offset = (ushort)Ptr.Diff<byte>(bufpos, bufstart);
+        name.CopyTo(Ptr.SpanFromPtrStartEnd<char>(bufpos, bufend));
+        bufpos += name.Length * 2;
+        *bufpos++ = 0; // null char terminator
+        *bufpos++ = 0;
+        return (offset, length: (ushort)(name.Length * 2));
+    }
+
+    /// <summary>Deletes only the reparse point data for a junction. Does not delete the target path. Throws for symlinks.</summary>
+    public static unsafe void DeleteJunctionData(string path)
+    {
+        deleteReparseData(path, PInvoke.IO_REPARSE_TAG_MOUNT_POINT);
+    }
+    /// <summary>Deletes only the reparse point data for a symlink. Does not delete the target path. Throws for junctions.</summary>
+    public static unsafe void DeleteSymlinkData(string path)
+    {
+        deleteReparseData(path, PInvoke.IO_REPARSE_TAG_SYMLINK);
+    }
+
+    private static unsafe void deleteReparseData(string path, uint tag)
     {
         var data = new REPARSE_DATA_BUFFER();
-        data.ReparseTag = PInvoke.IO_REPARSE_TAG_MOUNT_POINT;
+        data.ReparseTag = tag;
         data.ReparseDataLength = 0;
-        using var handle = OpenReparsePoint(junctionPoint, GENERIC_ACCESS_RIGHTS.GENERIC_WRITE);
+        using var handle = openReparsePoint(path, FILE_ACCESS_RIGHTS.FILE_WRITE_ATTRIBUTES);
         uint bytesReturned;
         if (!PInvoke.DeviceIoControl(handle, PInvoke.FSCTL_DELETE_REPARSE_POINT, &data, 8, null, 0, &bytesReturned, null))
             throw new Win32Exception();
     }
 
-    public class ReparsePointInfo
-    {
-        public uint ReparseTag;
-        public string SubstituteName;
-        public string PrintName;
-        public uint Flags;
-
-        public bool IsJunction => ReparseTag == PInvoke.IO_REPARSE_TAG_MOUNT_POINT;
-        public bool IsSymlink => ReparseTag == PInvoke.IO_REPARSE_TAG_SYMLINK;
-        public bool IsSymlinkRelative => IsSymlink && (Flags & 1) != 0;
-    }
-
     /// <summary>Returns null only if the specified path exists and is not a reparse point. Throws for other errors.</summary>
-    public static unsafe ReparsePointInfo GetTarget(string junctionPoint)
+    public static unsafe ReparsePointData GetReparseData(string path)
     {
-        using var handle = OpenReparsePoint(junctionPoint, GENERIC_ACCESS_RIGHTS.GENERIC_READ);
+        using var handle = openReparsePoint(path, FILE_ACCESS_RIGHTS.FILE_READ_ATTRIBUTES);
 
         const int bufsize = 0x4000;
         byte* buf = stackalloc byte[bufsize];
@@ -101,7 +130,7 @@ public static class ReparsePoint
         if (!result)
             throw new Win32Exception();
 
-        var res = new ReparsePointInfo();
+        var res = new ReparsePointData();
         res.ReparseTag = data->ReparseTag;
 
         if (res.IsJunction)
@@ -117,19 +146,29 @@ public static class ReparsePoint
             var slrbuf = Ptr.SpanFromPtrAndByteLength<char>(&slrb->PathBuffer, data->ReparseDataLength);
             res.SubstituteName = new string(slrbuf[(slrb->SubstituteNameOffset / 2)..][..(slrb->SubstituteNameLength / 2)]);
             res.PrintName = new string(slrbuf[(slrb->PrintNameOffset / 2)..][..(slrb->PrintNameLength / 2)]);
-            res.Flags = slrb->Flags;
+            res.SymlinkFlags = slrb->Flags;
         }
 
         return res;
     }
 
-    private static SafeFileHandle OpenReparsePoint(string reparsePoint, GENERIC_ACCESS_RIGHTS accessMode)
+    private static SafeFileHandle openReparsePoint(string path, FILE_ACCESS_RIGHTS accessMode)
     {
-        var reparsePointHandle = WinAPI.CreateFile(reparsePoint, (uint)accessMode,
+        return WinAPI.CreateFile(path, (uint)accessMode,
             FILE_SHARE_MODE.FILE_SHARE_READ | FILE_SHARE_MODE.FILE_SHARE_WRITE | FILE_SHARE_MODE.FILE_SHARE_DELETE,
             null, FILE_CREATION_DISPOSITION.OPEN_EXISTING,
             FILE_FLAGS_AND_ATTRIBUTES.FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAGS_AND_ATTRIBUTES.FILE_FLAG_OPEN_REPARSE_POINT, null);
-
-        return reparsePointHandle;
     }
+}
+
+public class ReparsePointData
+{
+    public uint ReparseTag;
+    public string SubstituteName;
+    public string PrintName;
+    public uint SymlinkFlags;
+
+    public bool IsJunction => ReparseTag == PInvoke.IO_REPARSE_TAG_MOUNT_POINT;
+    public bool IsSymlink => ReparseTag == PInvoke.IO_REPARSE_TAG_SYMLINK;
+    public bool IsSymlinkRelative => IsSymlink && (SymlinkFlags & 1 /*SYMLINK_FLAG_RELATIVE*/) != 0;
 }

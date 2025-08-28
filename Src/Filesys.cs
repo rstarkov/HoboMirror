@@ -8,6 +8,9 @@ using Windows.Win32.Storage.FileSystem;
 
 namespace HoboMirror;
 
+/// <summary>
+///     File system methods. All methods use backup semantics to bypass access control checks (requires SeBackup/SeRestore),
+///     and support long file paths.</summary>
 static class Filesys
 {
     private const FILE_SHARE_MODE FileShareAll = FILE_SHARE_MODE.FILE_SHARE_READ | FILE_SHARE_MODE.FILE_SHARE_WRITE | FILE_SHARE_MODE.FILE_SHARE_DELETE;
@@ -52,7 +55,7 @@ static class Filesys
     }
 
     /// <summary>
-    ///     Renames the file or direcotry. Uses backup semantics to bypass access control checks (requires
+    ///     Renames the file or directory. Uses backup semantics to bypass access control checks (requires
     ///     SeBackup/SeRestore). For reparse points, renames the reparse point itself, not its target.</summary>
     /// <param name="overwrite">
     ///     If true, will overwrite an existing file at the target path (throws otherwise). If the target is a directory, an
@@ -143,5 +146,18 @@ static class Filesys
         var sec = new DirectorySecurity(); // per docs, must construct a new object otherwise nothing gets applied
         sec.SetSecurityDescriptorBinaryForm(fileSecurity);
         info.SetAccessControl(sec);
+    }
+
+    /// <summary>Creates a new empty file at the specified path. Throws if the path already exists.</summary>
+    public static void CreateFile(string path)
+    {
+        using var handle = WinAPI.CreateFile(path, (uint)FILE_ACCESS_RIGHTS.FILE_GENERIC_WRITE, FileShareAll, null,
+            FILE_CREATION_DISPOSITION.CREATE_NEW, Semantics, null);
+    }
+
+    /// <summary>Creates a new empty directory at the specified path. Throws if the path already exists.</summary>
+    public static void CreateDirectory(string path)
+    {
+        Directory.CreateDirectory(WinAPI.LongPath(path)); // this deletes with backup semantics, i.e. ignoring ACLs if SeRestorePrivilege is enabled
     }
 }
