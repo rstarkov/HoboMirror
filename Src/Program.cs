@@ -527,9 +527,9 @@ class Program
     ///     that both the source and the target exist, and that both are files.</summary>
     private static void SyncFile(Item src, Item tgt)
     {
-        if (src.FileInfo.LastWriteTimeUtc == tgt.FileInfo.LastWriteTimeUtc && src.FileInfo.Length == tgt.FileInfo.Length)
+        if (src.LastWriteTime == tgt.LastWriteTime && src.FileInfo.Length == tgt.FileInfo.Length)
             return;
-        LogChange($"Found a modified file: ", GetOriginalSrcPath(src.FullPath), whatChanged: $"\r\n    length: {tgt.FileInfo.Length:#,0} -> {src.FileInfo.Length:#,0}\r\n    modified: {tgt.FileInfo.LastWriteTimeUtc} -> {src.FileInfo.LastWriteTimeUtc} (UTC)");
+        LogChange($"Found a modified file: ", GetOriginalSrcPath(src.FullPath), whatChanged: $"\r\n    length: {tgt.FileInfo.Length:#,0} -> {src.FileInfo.Length:#,0}\r\n    modified: {tgt.LastWriteTimeUtc} -> {src.LastWriteTimeUtc} (UTC)");
         ActCopyOrReplaceFile(src.FileInfo, tgt.FullPathWithName(src.Name));
     }
 
@@ -745,33 +745,31 @@ class Item
     public string Name => Info.Name;
     public ItemType Type { get; private set; }
     public ReparsePointData Reparse { get; private set; } // null if not a symlink or a junction
+    public long LastWriteTime { get; private set; }
+    public DateTime LastWriteTimeUtc => DateTime.FromFileTimeUtc(LastWriteTime);
     public string TypeDesc => Type == ItemType.Dir ? "directory" : Type == ItemType.DirSymlink ? "directory-symlink" : Type == ItemType.File ? "file" : Type == ItemType.FileSymlink ? "file-symlink" : Type == ItemType.Junction ? "junction" : throw new Exception("unreachable 63161");
     public override string ToString() => $"{TypeDesc}: {FullPath}{(Reparse == null ? "" : (" -> " + Reparse.SubstituteName))}";
 
     public Item(FileSystemInfo info)
     {
         Info = info;
-        var rp = ReparsePoint.GetReparseData(info.FullName);
-        if (rp != null)
+        var attrs = Filesys.GetTimestampsAndAttributes(info.FullName);
+        LastWriteTime = attrs.LastWriteTime;
+        bool isDir = (attrs.FileAttributes & (uint)FILE_FLAGS_AND_ATTRIBUTES.FILE_ATTRIBUTE_DIRECTORY) != 0;
+        Reparse = ReparsePoint.GetReparseData(info.FullName);
+        if (Reparse != null)
         {
-            Reparse = rp;
-            if (rp.IsJunction)
-            {
+            if (Reparse.IsJunction)
                 Type = ItemType.Junction;
-            }
-            else if (rp.IsSymlink)
-            {
-                Type = info is FileInfo ? ItemType.FileSymlink : info is DirectoryInfo ? ItemType.DirSymlink : throw new Exception("unreachable 27117");
-            }
+            else if (Reparse.IsSymlink)
+                Type = isDir ? ItemType.DirSymlink : ItemType.FileSymlink;
             else
-                throw new Exception($"unrecognized reparse point type {rp.ReparseTag}");
+                throw new Exception($"unrecognized reparse point type {Reparse.ReparseTag}");
         }
-        else if (info is FileInfo)
-            Type = ItemType.File;
-        else if (info is DirectoryInfo)
+        else if (isDir)
             Type = ItemType.Dir;
         else
-            throw new Exception("unreachable 61374");
+            Type = ItemType.File;
     }
 
     /// <summary>
