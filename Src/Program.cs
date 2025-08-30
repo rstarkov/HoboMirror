@@ -338,7 +338,7 @@ class Program
                 return Filesys.GetSecurityInfo(di);
             else
                 throw new Exception("unreachable 24961");
-        }, err => $"Unable to get {src.TypeDesc} access control ({err}): {GetOriginalSrcPath(src.Info.FullName)}");
+        }, err => $"Unable to get {src.TypeDesc} access control ({err}): {GetOriginalSrcPath(src.FullPath)}");
         if (acl == null)
             return;
 
@@ -350,7 +350,7 @@ class Program
                 Filesys.SetSecurityInfo(di, acl);
             else
                 throw new Exception("unreachable 16943");
-        }, err => $"Unable to set {tgt.TypeDesc} access control ({err}): {tgt.Info.FullName}");
+        }, err => $"Unable to set {tgt.TypeDesc} access control ({err}): {tgt.FullPath}");
     }
 
     private static void CopyAttributes(Item src, Item tgt)
@@ -361,16 +361,16 @@ class Program
         FILE_BASIC_INFO info = default;
         var ok = TryCatchIo(() =>
         {
-            info = Filesys.GetTimestampsAndAttributes(src.Info.FullName);
+            info = Filesys.GetTimestampsAndAttributes(src.FullPath);
             return true;
-        }, err => $"Unable to get {src.TypeDesc} times/attributes ({err}): {GetOriginalSrcPath(src.Info.FullName)}");
+        }, err => $"Unable to get {src.TypeDesc} times/attributes ({err}): {GetOriginalSrcPath(src.FullPath)}");
         if (!ok)
             return;
 
         TryCatchIo(() =>
         {
-            Filesys.SetTimestampsAndAttributes(tgt.Info.FullName, info);
-        }, err => $"Unable to set {tgt.TypeDesc} times/attributes ({err}): {tgt.Info.FullName}");
+            Filesys.SetTimestampsAndAttributes(tgt.FullPath, info);
+        }, err => $"Unable to set {tgt.TypeDesc} times/attributes ({err}): {tgt.FullPath}");
     }
 
     /// <summary>
@@ -395,7 +395,7 @@ class Program
             var tgtItems = GetDirectoryItems(tgt.DirInfo);
             if (srcItems == null || tgtItems == null)
             {
-                LogError($"Unable to mirror directory: {GetOriginalSrcPath(src.DirInfo.FullName)}");
+                LogError($"Unable to mirror directory: {GetOriginalSrcPath(src.FullPath)}");
                 return;
             }
             var srcDict = srcItems.ToDictionary(t => t.Info.Name, StringComparer.OrdinalIgnoreCase);
@@ -407,14 +407,14 @@ class Program
             // Ignore paths as requested: pretend they don't exist in source, which gets them deleted in target if present
             foreach (var srcItem in srcDict.Values.ToList())
             {
-                if (Args.IgnorePath.Concat(Settings.IgnorePaths).Any(ignore => PathsEqual(GetOriginalSrcPath(srcItem.Info.FullName), ignore)))
+                if (Args.IgnorePath.Concat(Settings.IgnorePaths).Any(ignore => PathsEqual(GetOriginalSrcPath(srcItem.FullPath), ignore)))
                 {
-                    LogAction($"Ignoring path: {GetOriginalSrcPath(srcItem.Info.FullName)}");
+                    LogAction($"Ignoring path: {GetOriginalSrcPath(srcItem.FullPath)}");
                     srcDict.Remove(srcItem.Info.Name);
                 }
                 else if (srcItem.Type == ItemType.Dir && Settings.IgnoreDirNames.Any(ignore => ignore.EqualsIgnoreCase(srcItem.DirInfo.Name)))
                 {
-                    LogAction($"Ignoring directory name: {GetOriginalSrcPath(srcItem.Info.FullName)}");
+                    LogAction($"Ignoring directory name: {GetOriginalSrcPath(srcItem.FullPath)}");
                     srcDict.Remove(srcItem.Info.Name);
                 }
             }
@@ -422,7 +422,7 @@ class Program
             srcItems = srcDict.Values.OrderBy(s => s.Type == ItemType.Dir ? 2 : 1).ThenBy(s => s.Info.Name.ToLowerInvariant()).ToArray();
             tgtItems = tgtDict.Values.OrderBy(s => s.Type == ItemType.Dir ? 2 : 1).ThenBy(s => s.Info.Name.ToLowerInvariant()).ToArray();
 
-            Console.Title = GetOriginalSrcPath(src.DirInfo.FullName) + " (directory ACL)";
+            Console.Title = GetOriginalSrcPath(src.FullPath) + " (directory ACL)";
             CopyAccessControl(src, tgt); // this potentially modifies sub-items, so we must do it before syncing the sub-items
 
             // Phase 1: delete all target items which are missing in source, or are of a different item type
@@ -434,9 +434,9 @@ class Program
                 Console.Title = GetOriginalSrcPath(src.DirInfo.FullNameWithName(tgtItem.Info.Name)) + " (delete)";
 
                 if (srcItem == null)
-                    LogChange($"Found deleted {tgtItem.TypeDesc}: ", GetOriginalSrcPath(Path.Combine(src.DirInfo.FullName, tgtItem.Info.Name)));
+                    LogChange($"Found deleted {tgtItem.TypeDesc}: ", GetOriginalSrcPath(Path.Combine(src.FullPath, tgtItem.Info.Name)));
                 else
-                    LogChange($"Found {srcItem.TypeDesc} which used to be a {tgtItem.TypeDesc}: ", GetOriginalSrcPath(srcItem.Info.FullName));
+                    LogChange($"Found {srcItem.TypeDesc} which used to be a {tgtItem.TypeDesc}: ", GetOriginalSrcPath(srcItem.FullPath));
                 ActDelete(tgtItem);
                 tgtDict.Remove(tgtItem.Info.Name);
             }
@@ -448,7 +448,7 @@ class Program
                 var tgtItem = tgtDict.Get(srcItem.Info.Name, null);
                 if (tgtItem == null)
                     continue;
-                Console.Title = GetOriginalSrcPath(srcItem.Info.FullName) + " (sync)";
+                Console.Title = GetOriginalSrcPath(srcItem.FullPath) + " (sync)";
 
                 if (srcItem.Type == ItemType.Dir && tgtItem.Type == ItemType.Dir)
                     SyncDir(srcItem, tgtItem);
@@ -469,10 +469,10 @@ class Program
             {
                 if (tgtDict.ContainsKey(srcItem.Info.Name))
                     continue;
-                Console.Title = GetOriginalSrcPath(srcItem.Info.FullName) + " (copy)";
+                Console.Title = GetOriginalSrcPath(srcItem.FullPath) + " (copy)";
 
-                LogChange($"Found new {srcItem.TypeDesc}: ", GetOriginalSrcPath(srcItem.Info.FullName));
-                var tgtFullName = Path.Combine(tgt.DirInfo.FullName, srcItem.Info.Name);
+                LogChange($"Found new {srcItem.TypeDesc}: ", GetOriginalSrcPath(srcItem.FullPath));
+                var tgtFullName = Path.Combine(tgt.FullPath, srcItem.Info.Name);
                 if (srcItem.Type == ItemType.Dir)
                     ActCopyDirectory(srcItem, tgtFullName);
                 else if (srcItem.Type == ItemType.File)
@@ -497,7 +497,7 @@ class Program
                 var tgtItem = tgtDict.Get(srcItem.Info.Name, null);
                 if (tgtItem == null)
                     continue;
-                Console.Title = GetOriginalSrcPath(srcItem.Info.FullName) + " (attributes)";
+                Console.Title = GetOriginalSrcPath(srcItem.FullPath) + " (attributes)";
 
                 if (srcItem.Type != ItemType.Dir) // directories are handled by Copy* calls just before and just after these 4 phases
                 {
@@ -510,15 +510,15 @@ class Program
             // Update statistics
             if (Settings != null)
             {
-                var path = GetOriginalSrcPath(src.Info.FullName).WithSlash();
+                var path = GetOriginalSrcPath(src.FullPath).WithSlash();
                 Settings.DirectoryChangeCount[path].TimesScanned++;
             }
         }
         catch (Exception e)
         {
             // none of the above code is supposed to throw under any known circumstances
-            LogError($"Unable to sync directory ({e.Message}): {GetOriginalSrcPath(src.Info.FullName)}");
-            LogCriticalError($"SyncDir: {GetOriginalSrcPath(src.Info.FullName)}\r\n    {e.GetType().Name}: {e.Message}\r\n{e.StackTrace}");
+            LogError($"Unable to sync directory ({e.Message}): {GetOriginalSrcPath(src.FullPath)}");
+            LogCriticalError($"SyncDir: {GetOriginalSrcPath(src.FullPath)}\r\n    {e.GetType().Name}: {e.Message}\r\n{e.StackTrace}");
         }
     }
 
@@ -529,7 +529,7 @@ class Program
     {
         if (src.FileInfo.LastWriteTimeUtc == tgt.FileInfo.LastWriteTimeUtc && src.FileInfo.Length == tgt.FileInfo.Length)
             return;
-        LogChange($"Found a modified file: ", GetOriginalSrcPath(src.FileInfo.FullName), whatChanged: $"\r\n    length: {tgt.FileInfo.Length:#,0} -> {src.FileInfo.Length:#,0}\r\n    modified: {tgt.FileInfo.LastWriteTimeUtc} -> {src.FileInfo.LastWriteTimeUtc} (UTC)");
+        LogChange($"Found a modified file: ", GetOriginalSrcPath(src.FullPath), whatChanged: $"\r\n    length: {tgt.FileInfo.Length:#,0} -> {src.FileInfo.Length:#,0}\r\n    modified: {tgt.FileInfo.LastWriteTimeUtc} -> {src.FileInfo.LastWriteTimeUtc} (UTC)");
         ActCopyOrReplaceFile(src.FileInfo, tgt.FileInfo.FullNameWithName(src.FileInfo.Name));
     }
 
@@ -542,7 +542,7 @@ class Program
         var tgtR = tgt.Reparse;
         if (srcR.SubstituteName == tgtR.SubstituteName && srcR.PrintName == tgtR.PrintName && srcR.IsSymlinkRelative == tgtR.IsSymlinkRelative)
             return;
-        LogChange($"Found a modified {src.TypeDesc}: ", GetOriginalSrcPath(src.FileInfo.FullName), whatChanged: $"\r\n    target: {tgtR.SubstituteName} -> {srcR.SubstituteName}\r\n    print name: {tgtR.PrintName} -> {srcR.PrintName}\r\n    relative: {tgtR.IsSymlinkRelative} -> {srcR.IsSymlinkRelative}");
+        LogChange($"Found a modified {src.TypeDesc}: ", GetOriginalSrcPath(src.FullPath), whatChanged: $"\r\n    target: {tgtR.SubstituteName} -> {srcR.SubstituteName}\r\n    print name: {tgtR.PrintName} -> {srcR.PrintName}\r\n    relative: {tgtR.IsSymlinkRelative} -> {srcR.IsSymlinkRelative}");
         ActDelete(tgt);
         ActCreateFileSymlink(tgt.FileInfo.FullNameWithName(src.FileInfo.Name), srcR);
     }
@@ -556,7 +556,7 @@ class Program
         var tgtR = tgt.Reparse;
         if (srcR.SubstituteName == tgtR.SubstituteName && srcR.PrintName == tgtR.PrintName && srcR.IsSymlinkRelative == tgtR.IsSymlinkRelative)
             return;
-        LogChange($"Found a modified {src.TypeDesc}: ", GetOriginalSrcPath(src.DirInfo.FullName), whatChanged: $"\r\n    target: {tgtR.SubstituteName} -> {srcR.SubstituteName}\r\n    print name: {tgtR.PrintName} -> {srcR.PrintName}\r\n    relative: {tgtR.IsSymlinkRelative} -> {srcR.IsSymlinkRelative}");
+        LogChange($"Found a modified {src.TypeDesc}: ", GetOriginalSrcPath(src.FullPath), whatChanged: $"\r\n    target: {tgtR.SubstituteName} -> {srcR.SubstituteName}\r\n    print name: {tgtR.PrintName} -> {srcR.PrintName}\r\n    relative: {tgtR.IsSymlinkRelative} -> {srcR.IsSymlinkRelative}");
         ActDelete(tgt);
         ActCreateDirSymlink(tgt.DirInfo.FullNameWithName(src.DirInfo.Name), srcR);
     }
@@ -570,7 +570,7 @@ class Program
         var tgtR = tgt.Reparse;
         if (srcR.SubstituteName == tgtR.SubstituteName && srcR.PrintName == tgtR.PrintName)
             return;
-        LogChange($"Found a modified {src.TypeDesc}: ", GetOriginalSrcPath(src.DirInfo.FullName), whatChanged: $"\r\n    target: {tgtR.SubstituteName} -> {srcR.SubstituteName}\r\n    print name: {tgtR.PrintName} -> {srcR.PrintName}");
+        LogChange($"Found a modified {src.TypeDesc}: ", GetOriginalSrcPath(src.FullPath), whatChanged: $"\r\n    target: {tgtR.SubstituteName} -> {srcR.SubstituteName}\r\n    print name: {tgtR.PrintName} -> {srcR.PrintName}");
         ActDelete(tgt);
         ActCreateJunction(tgt.DirInfo.FullNameWithName(src.DirInfo.Name), srcR);
     }
@@ -587,17 +587,17 @@ class Program
                     throw new Exception("could not enumerate directory contents");
                 foreach (var item in items.OrderBy(t => t.Type == ItemType.Dir ? 2 : 1).ThenBy(t => t.Info.Name))
                     ActDelete(item);
-                TryCatchIoAction("delete empty directory", tgt.DirInfo.FullName, () =>
+                TryCatchIoAction("delete empty directory", tgt.FullPath, () =>
                 {
-                    Filesys.Delete(tgt.Info.FullName);
+                    Filesys.Delete(tgt.FullPath);
                 });
             }
             else
             {
-                LogAction($"Delete {tgt.TypeDesc}: {tgt.Info.FullName}");
-                Filesys.Delete(tgt.Info.FullName);
+                LogAction($"Delete {tgt.TypeDesc}: {tgt.FullPath}");
+                Filesys.Delete(tgt.FullPath);
             }
-        }, err => $"Unable to delete {tgt.TypeDesc} ({err}): {tgt.Info.FullName}");
+        }, err => $"Unable to delete {tgt.TypeDesc} ({err}): {tgt.FullPath}");
     }
 
     /// <summary>Creates the specified directory. Assumes that it doesn't exist.</summary>
@@ -646,7 +646,7 @@ class Program
         var tgtItem = CreateItem(newDirectoryInfo(tgtFullName));
         if (tgtItem == null)
         {
-            LogError($"Unable to copy directory: {GetOriginalSrcPath(srcItem.DirInfo.FullName)}");
+            LogError($"Unable to copy directory: {GetOriginalSrcPath(srcItem.FullPath)}");
             return;
         }
         SyncDir(srcItem, tgtItem);
@@ -741,10 +741,11 @@ class Item
     public FileSystemInfo Info { get; private set; }
     public FileInfo FileInfo => (FileInfo)Info;
     public DirectoryInfo DirInfo => (DirectoryInfo)Info;
+    public string FullPath => Info.FullName;
     public ItemType Type { get; private set; }
     public ReparsePointData Reparse { get; private set; } // null if not a symlink or a junction
     public string TypeDesc => Type == ItemType.Dir ? "directory" : Type == ItemType.DirSymlink ? "directory-symlink" : Type == ItemType.File ? "file" : Type == ItemType.FileSymlink ? "file-symlink" : Type == ItemType.Junction ? "junction" : throw new Exception("unreachable 63161");
-    public override string ToString() => $"{TypeDesc}: {Info.FullName}{(Reparse == null ? "" : (" -> " + Reparse.SubstituteName))}";
+    public override string ToString() => $"{TypeDesc}: {FullPath}{(Reparse == null ? "" : (" -> " + Reparse.SubstituteName))}";
 
     public Item(FileSystemInfo info)
     {
