@@ -466,7 +466,7 @@ class Program
                 if (srcItem.Type == ItemType.Dir)
                     ActCopyDirectory(srcItem, tgtFullName);
                 else if (srcItem.Type == ItemType.File)
-                    ActCopyOrReplaceFile(srcItem.FileInfo, tgtFullName);
+                    ActCopyOrReplaceFile(srcItem.FullPath, tgtFullName);
                 else if (srcItem.Type == ItemType.FileSymlink)
                     ActCreateFileSymlink(tgtFullName, srcItem.Reparse);
                 else if (srcItem.Type == ItemType.DirSymlink)
@@ -520,7 +520,7 @@ class Program
         if (src.Attrs.LastWriteTime == tgt.Attrs.LastWriteTime && src.FileLength == tgt.FileLength)
             return;
         LogChange($"Found a modified file: ", GetOriginalSrcPath(src.FullPath), whatChanged: $"\r\n    length: {tgt.FileLength:#,0} -> {src.FileLength:#,0}\r\n    modified: {DateTime.FromFileTimeUtc(tgt.Attrs.LastWriteTime)} -> {DateTime.FromFileTimeUtc(src.Attrs.LastWriteTime)} (UTC)");
-        ActCopyOrReplaceFile(src.FileInfo, tgt.FullPathWithName(src.Name));
+        ActCopyOrReplaceFile(src.FullPath, tgt.FullPathWithName(src.Name));
     }
 
     /// <summary>
@@ -646,13 +646,13 @@ class Program
     ///     Copies a file to the specified path. Always copies to a temporary file in the target directory first, followed by
     ///     a rename, to avoid errors leaving a half finished file looking like the real thing. Unlike other "act" methods,
     ///     this method allows the target file to already exist, and will replace it on successful copy.</summary>
-    private static void ActCopyOrReplaceFile(FileInfo src, string tgtFullName)
+    private static void ActCopyOrReplaceFile(string srcFullName, string tgtFullName)
     {
         var tgtTemp = Path.Combine(Path.GetDirectoryName(tgtFullName), $"~HoboMirror-{Rnd.GenerateString(16)}.tmp");
 
-        bool success = TryCatchIoAction("copy file", GetOriginalSrcPath(src.FullName), () =>
+        bool success = TryCatchIoAction("copy file", GetOriginalSrcPath(srcFullName), () =>
         {
-            Filesys.CopyFile(src.FullName, tgtTemp, CopyProgress);
+            Filesys.CopyFile(srcFullName, tgtTemp, CopyProgress);
             return true;
         });
         if (!success)
@@ -729,7 +729,6 @@ enum ItemType { File, Dir, FileSymlink, DirSymlink, Junction }
 class Item
 {
     public FileSystemInfo Info { get; private set; }
-    public FileInfo FileInfo => (FileInfo)Info;
     public DirectoryInfo DirInfo => (DirectoryInfo)Info;
     public string FullPath => Info.FullName;
     public string Name => Info.Name;
