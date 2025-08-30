@@ -431,7 +431,7 @@ class Program
                 var srcItem = srcDict.Get(tgtItem.Name, null);
                 if (srcItem != null && srcItem.Type == tgtItem.Type)
                     continue;
-                Console.Title = GetOriginalSrcPath(src.DirInfo.FullNameWithName(tgtItem.Name)) + " (delete)";
+                Console.Title = GetOriginalSrcPath(src.FullPathWithName(tgtItem.Name)) + " (delete)";
 
                 if (srcItem == null)
                     LogChange($"Found deleted {tgtItem.TypeDesc}: ", GetOriginalSrcPath(Path.Combine(src.FullPath, tgtItem.Name)));
@@ -530,7 +530,7 @@ class Program
         if (src.FileInfo.LastWriteTimeUtc == tgt.FileInfo.LastWriteTimeUtc && src.FileInfo.Length == tgt.FileInfo.Length)
             return;
         LogChange($"Found a modified file: ", GetOriginalSrcPath(src.FullPath), whatChanged: $"\r\n    length: {tgt.FileInfo.Length:#,0} -> {src.FileInfo.Length:#,0}\r\n    modified: {tgt.FileInfo.LastWriteTimeUtc} -> {src.FileInfo.LastWriteTimeUtc} (UTC)");
-        ActCopyOrReplaceFile(src.FileInfo, tgt.FileInfo.FullNameWithName(src.Name));
+        ActCopyOrReplaceFile(src.FileInfo, tgt.FullPathWithName(src.Name));
     }
 
     /// <summary>
@@ -544,7 +544,7 @@ class Program
             return;
         LogChange($"Found a modified {src.TypeDesc}: ", GetOriginalSrcPath(src.FullPath), whatChanged: $"\r\n    target: {tgtR.SubstituteName} -> {srcR.SubstituteName}\r\n    print name: {tgtR.PrintName} -> {srcR.PrintName}\r\n    relative: {tgtR.IsSymlinkRelative} -> {srcR.IsSymlinkRelative}");
         ActDelete(tgt);
-        ActCreateFileSymlink(tgt.FileInfo.FullNameWithName(src.Name), srcR);
+        ActCreateFileSymlink(tgt.FullPathWithName(src.Name), srcR);
     }
 
     /// <summary>
@@ -558,7 +558,7 @@ class Program
             return;
         LogChange($"Found a modified {src.TypeDesc}: ", GetOriginalSrcPath(src.FullPath), whatChanged: $"\r\n    target: {tgtR.SubstituteName} -> {srcR.SubstituteName}\r\n    print name: {tgtR.PrintName} -> {srcR.PrintName}\r\n    relative: {tgtR.IsSymlinkRelative} -> {srcR.IsSymlinkRelative}");
         ActDelete(tgt);
-        ActCreateDirSymlink(tgt.DirInfo.FullNameWithName(src.Name), srcR);
+        ActCreateDirSymlink(tgt.FullPathWithName(src.Name), srcR);
     }
 
     /// <summary>
@@ -572,7 +572,7 @@ class Program
             return;
         LogChange($"Found a modified {src.TypeDesc}: ", GetOriginalSrcPath(src.FullPath), whatChanged: $"\r\n    target: {tgtR.SubstituteName} -> {srcR.SubstituteName}\r\n    print name: {tgtR.PrintName} -> {srcR.PrintName}");
         ActDelete(tgt);
-        ActCreateJunction(tgt.DirInfo.FullNameWithName(src.Name), srcR);
+        ActCreateJunction(tgt.FullPathWithName(src.Name), srcR);
     }
 
     /// <summary>Deletes the specified item of any type. Assumes that the item exists.</summary>
@@ -781,5 +781,12 @@ class Item
     {
         Info = info;
         Type = type;
+    }
+
+    /// <summary>
+    ///     Replaces the name in this item's full path with the target name (for the purpose of perserving capitalisation).</summary>
+    public string FullPathWithName(string name)
+    {
+        return Path.Combine(Path.GetDirectoryName(FullPath), name);
     }
 }

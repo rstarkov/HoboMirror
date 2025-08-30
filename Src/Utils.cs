@@ -13,16 +13,6 @@ static class ExtensionMethods
     {
         return path.EndsWith("\\") ? path : (path + "\\");
     }
-
-    public static string ParentFullName(this FileSystemInfo fsi)
-    {
-        return Path.GetDirectoryName(fsi.FullName);
-    }
-
-    public static string FullNameWithName(this FileSystemInfo fsi, string name)
-    {
-        return Path.Combine(fsi.ParentFullName(), name);
-    }
 }
 
 static unsafe class Ptr
