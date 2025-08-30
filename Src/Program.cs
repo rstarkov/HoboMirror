@@ -357,19 +357,9 @@ class Program
     {
         if (!UpdateMetadata)
             return;
-
-        FILE_BASIC_INFO info = default;
-        var ok = TryCatchIo(() =>
-        {
-            info = Filesys.GetTimestampsAndAttributes(src.FullPath);
-            return true;
-        }, err => $"Unable to get {src.TypeDesc} times/attributes ({err}): {GetOriginalSrcPath(src.FullPath)}");
-        if (!ok)
-            return;
-
         TryCatchIo(() =>
         {
-            Filesys.SetTimestampsAndAttributes(tgt.FullPath, info);
+            Filesys.SetTimestampsAndAttributes(tgt.FullPath, src.Attrs);
         }, err => $"Unable to set {tgt.TypeDesc} times/attributes ({err}): {tgt.FullPath}");
     }
 
@@ -527,9 +517,9 @@ class Program
     ///     that both the source and the target exist, and that both are files.</summary>
     private static void SyncFile(Item src, Item tgt)
     {
-        if (src.LastWriteTime == tgt.LastWriteTime && src.Length == tgt.Length)
+        if (src.Attrs.LastWriteTime == tgt.Attrs.LastWriteTime && src.FileLength == tgt.FileLength)
             return;
-        LogChange($"Found a modified file: ", GetOriginalSrcPath(src.FullPath), whatChanged: $"\r\n    length: {tgt.Length:#,0} -> {src.Length:#,0}\r\n    modified: {tgt.LastWriteTimeUtc} -> {src.LastWriteTimeUtc} (UTC)");
+        LogChange($"Found a modified file: ", GetOriginalSrcPath(src.FullPath), whatChanged: $"\r\n    length: {tgt.FileLength:#,0} -> {src.FileLength:#,0}\r\n    modified: {DateTime.FromFileTimeUtc(tgt.Attrs.LastWriteTime)} -> {DateTime.FromFileTimeUtc(src.Attrs.LastWriteTime)} (UTC)");
         ActCopyOrReplaceFile(src.FileInfo, tgt.FullPathWithName(src.Name));
     }
 
@@ -745,9 +735,8 @@ class Item
     public string Name => Info.Name;
     public ItemType Type { get; private set; }
     public ReparsePointData Reparse { get; private set; } // null if not a symlink or a junction
-    public long LastWriteTime { get; private set; }
-    public DateTime LastWriteTimeUtc => DateTime.FromFileTimeUtc(LastWriteTime);
-    public long Length { get; private set; }
+    public FILE_BASIC_INFO Attrs { get; private set; }
+    public long FileLength { get; private set; }
     public string TypeDesc => Type == ItemType.Dir ? "directory" : Type == ItemType.DirSymlink ? "directory-symlink" : Type == ItemType.File ? "file" : Type == ItemType.FileSymlink ? "file-symlink" : Type == ItemType.Junction ? "junction" : throw new Exception("unreachable 63161");
     public override string ToString() => $"{TypeDesc}: {FullPath}{(Reparse == null ? "" : (" -> " + Reparse.SubstituteName))}";
 
@@ -755,11 +744,10 @@ class Item
     {
         Info = info;
         using var handle = Filesys.OpenHandle(info.FullName, (uint)FILE_ACCESS_RIGHTS.FILE_READ_ATTRIBUTES);
-        var attrs = Filesys.GetTimestampsAndAttributes(handle);
-        LastWriteTime = attrs.LastWriteTime;
-        bool isDir = (attrs.FileAttributes & (uint)FILE_FLAGS_AND_ATTRIBUTES.FILE_ATTRIBUTE_DIRECTORY) != 0;
+        Attrs = Filesys.GetTimestampsAndAttributes(handle);
+        bool isDir = (Attrs.FileAttributes & (uint)FILE_FLAGS_AND_ATTRIBUTES.FILE_ATTRIBUTE_DIRECTORY) != 0;
         Reparse = ReparsePoint.GetReparseData(handle);
-        Length = 0;
+        FileLength = 0;
         if (Reparse != null)
         {
             if (Reparse.IsJunction)
@@ -774,7 +762,7 @@ class Item
         else
         {
             Type = ItemType.File;
-            Length = Filesys.GetFileLength(handle);
+            FileLength = Filesys.GetFileLength(handle);
         }
     }
 
