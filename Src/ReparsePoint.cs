@@ -48,7 +48,7 @@ public static class ReparsePoint
         (mprb->PrintNameOffset, mprb->PrintNameLength) = writeNameToBuffer(printName, ref bufpos, (byte*)&mprb->PathBuffer, bufend);
         data->ReparseDataLength = (ushort)Ptr.Diff<byte>(bufpos, mprb);
 
-        using var handle = openReparsePoint(path, FILE_ACCESS_RIGHTS.FILE_WRITE_ATTRIBUTES);
+        using var handle = Filesys.OpenHandle(path, (uint)FILE_ACCESS_RIGHTS.FILE_WRITE_ATTRIBUTES);
         uint bytesReturned;
         uint buflen = (uint)Ptr.Diff<byte>(bufpos, buf);
         if (!PInvoke.DeviceIoControl(handle, PInvoke.FSCTL_SET_REPARSE_POINT, buf, buflen, null, 0, &bytesReturned, null))
@@ -75,7 +75,7 @@ public static class ReparsePoint
         slrb->Flags = (relative ? 1u /*SYMLINK_FLAG_RELATIVE*/ : 0u);
         data->ReparseDataLength = (ushort)Ptr.Diff<byte>(bufpos, slrb);
 
-        using var handle = openReparsePoint(path, FILE_ACCESS_RIGHTS.FILE_WRITE_ATTRIBUTES);
+        using var handle = Filesys.OpenHandle(path, (uint)FILE_ACCESS_RIGHTS.FILE_WRITE_ATTRIBUTES);
         uint bytesReturned;
         uint buflen = (uint)Ptr.Diff<byte>(bufpos, buf);
         if (!PInvoke.DeviceIoControl(handle, PInvoke.FSCTL_SET_REPARSE_POINT, buf, buflen, null, 0, &bytesReturned, null))
@@ -108,7 +108,7 @@ public static class ReparsePoint
         var data = new REPARSE_DATA_BUFFER();
         data.ReparseTag = tag;
         data.ReparseDataLength = 0;
-        using var handle = openReparsePoint(path, FILE_ACCESS_RIGHTS.FILE_WRITE_ATTRIBUTES);
+        using var handle = Filesys.OpenHandle(path, (uint)FILE_ACCESS_RIGHTS.FILE_WRITE_ATTRIBUTES);
         uint bytesReturned;
         if (!PInvoke.DeviceIoControl(handle, PInvoke.FSCTL_DELETE_REPARSE_POINT, &data, 8, null, 0, &bytesReturned, null))
             throw new Win32Exception();
@@ -117,7 +117,7 @@ public static class ReparsePoint
     /// <summary>Returns null only if the specified path exists and is not a reparse point. Throws for other errors.</summary>
     public static ReparsePointData GetReparseData(string path)
     {
-        using var handle = openReparsePoint(path, FILE_ACCESS_RIGHTS.FILE_READ_ATTRIBUTES);
+        using var handle = Filesys.OpenHandle(path, (uint)FILE_ACCESS_RIGHTS.FILE_READ_ATTRIBUTES);
         return GetReparseData(handle);
     }
     /// <summary>Returns null only if the specified path exists and is not a reparse point. Throws for other errors.</summary>
@@ -154,14 +154,6 @@ public static class ReparsePoint
         }
 
         return res;
-    }
-
-    private static SafeFileHandle openReparsePoint(string path, FILE_ACCESS_RIGHTS accessMode)
-    {
-        return WinAPI.CreateFile(path, (uint)accessMode,
-            FILE_SHARE_MODE.FILE_SHARE_READ | FILE_SHARE_MODE.FILE_SHARE_WRITE | FILE_SHARE_MODE.FILE_SHARE_DELETE,
-            null, FILE_CREATION_DISPOSITION.OPEN_EXISTING,
-            FILE_FLAGS_AND_ATTRIBUTES.FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAGS_AND_ATTRIBUTES.FILE_FLAG_OPEN_REPARSE_POINT, null);
     }
 }
 
