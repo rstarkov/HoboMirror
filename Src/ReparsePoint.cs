@@ -115,10 +115,14 @@ public static class ReparsePoint
     }
 
     /// <summary>Returns null only if the specified path exists and is not a reparse point. Throws for other errors.</summary>
-    public static unsafe ReparsePointData GetReparseData(string path)
+    public static ReparsePointData GetReparseData(string path)
     {
         using var handle = openReparsePoint(path, FILE_ACCESS_RIGHTS.FILE_READ_ATTRIBUTES);
-
+        return GetReparseData(handle);
+    }
+    /// <summary>Returns null only if the specified path exists and is not a reparse point. Throws for other errors.</summary>
+    public static unsafe ReparsePointData GetReparseData(SafeFileHandle handle)
+    {
         const int bufsize = 0x4000;
         byte* buf = stackalloc byte[bufsize];
         var data = (REPARSE_DATA_BUFFER*)buf;

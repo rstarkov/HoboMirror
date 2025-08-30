@@ -1,6 +1,7 @@
 ﻿using System.ComponentModel;
 using System.Runtime.InteropServices;
 using System.Security.AccessControl;
+using Microsoft.Win32.SafeHandles;
 using Windows.Wdk.Storage.FileSystem;
 using Windows.Win32;
 using Windows.Win32.Foundation;
@@ -18,16 +19,40 @@ static class Filesys
     private const FILE_CREATION_DISPOSITION FileDispNew = FILE_CREATION_DISPOSITION.CREATE_NEW;
     private const FILE_FLAGS_AND_ATTRIBUTES Semantics = FILE_FLAGS_AND_ATTRIBUTES.FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAGS_AND_ATTRIBUTES.FILE_FLAG_OPEN_REPARSE_POINT;
 
+    public static SafeFileHandle OpenHandle(string path, uint dwDesiredAccess)
+    {
+        return WinAPI.CreateFile(path, dwDesiredAccess, FileShareAll, null, FileDispExisting, Semantics, null);
+    }
+
     /// <summary>
     ///     Gets timestamps and attributes for path. Uses backup semantics to bypass access control checks (requires
     ///     SeBackup/SeRestore). For reparse points, reads the reparse point itself, not its target.</summary>
-    public static unsafe FILE_BASIC_INFO GetTimestampsAndAttributes(string path)
+    public static FILE_BASIC_INFO GetTimestampsAndAttributes(string path)
     {
         using var handle = WinAPI.CreateFile(path, (uint)FILE_ACCESS_RIGHTS.FILE_READ_ATTRIBUTES, FileShareAll, null, FileDispExisting, Semantics, null);
+        return GetTimestampsAndAttributes(handle);
+    }
+    /// <summary>
+    ///     Gets timestamps and attributes for path. Uses backup semantics to bypass access control checks (requires
+    ///     SeBackup/SeRestore). For reparse points, reads the reparse point itself, not its target.</summary>
+    public static unsafe FILE_BASIC_INFO GetTimestampsAndAttributes(SafeFileHandle handle)
+    {
         FILE_BASIC_INFO info;
         if (!PInvoke.GetFileInformationByHandleEx(handle, FILE_INFO_BY_HANDLE_CLASS.FileBasicInfo, &info, (uint)Marshal.SizeOf<FILE_BASIC_INFO>()))
             throw new Win32Exception();
         return info;
+    }
+
+    public static long GetFileLength(string path)
+    {
+        using var handle = WinAPI.CreateFile(path, (uint)FILE_ACCESS_RIGHTS.FILE_READ_ATTRIBUTES, FileShareAll, null, FileDispExisting, Semantics, null);
+        return GetFileLength(handle);
+    }
+    public static unsafe long GetFileLength(SafeFileHandle handle)
+    {
+        if (!PInvoke.GetFileSizeEx(handle, out var lpFileSize))
+            throw new Win32Exception();
+        return lpFileSize;
     }
 
     /// <summary>
