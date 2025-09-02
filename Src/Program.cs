@@ -8,7 +8,6 @@ using RT.Util;
 using RT.Util.Consoles;
 using RT.Util.ExtensionMethods;
 using Windows.Win32.Storage.FileSystem;
-using IO = System.IO;
 
 // Notes:
 // Sync* methods find and log the changes using LogChange. Act* methods perform and log modifications using LogAction
@@ -27,7 +26,7 @@ class Program
     static int Errors = 0;
     static int CriticalErrors = 0;
 
-    static IO.StreamWriter ActionLog, ChangeLog, ErrorLog, CriticalErrorLog, DebugLog;
+    static StreamWriter ActionLog, ChangeLog, ErrorLog, CriticalErrorLog, DebugLog;
 
     static int Main(string[] args)
     {
@@ -84,11 +83,12 @@ class Program
             if (Args.LogPath == "")
                 Args.LogPath = PathUtil.AppPath;
             var enc = new UTF8Encoding(false, throwOnInvalidBytes: false); // allows us to log filenames that are not valid UTF-16 (unpaired surrogates)
-            ActionLog = new IO.StreamWriter(IO.File.Open(Path.Combine(Args.LogPath, $"HoboMirror-Actions.{DateTime.Today:yyyy-MM-dd}.txt"), IO.FileMode.Append, IO.FileAccess.Write, IO.FileShare.Read), enc);
-            ChangeLog = new IO.StreamWriter(IO.File.Open(Path.Combine(Args.LogPath, $"HoboMirror-Changes.{DateTime.Today:yyyy-MM-dd}.txt"), IO.FileMode.Append, IO.FileAccess.Write, IO.FileShare.Read), enc);
-            ErrorLog = new IO.StreamWriter(IO.File.Open(Path.Combine(Args.LogPath, $"HoboMirror-Errors.{DateTime.Today:yyyy-MM-dd}.txt"), IO.FileMode.Append, IO.FileAccess.Write, IO.FileShare.Read), enc);
-            CriticalErrorLog = new IO.StreamWriter(IO.File.Open(Path.Combine(Args.LogPath, $"HoboMirror-ErrorsCritical.{DateTime.Today:yyyy-MM-dd}.txt"), IO.FileMode.Append, IO.FileAccess.Write, IO.FileShare.Read), enc);
-            DebugLog = new IO.StreamWriter(IO.File.Open(Path.Combine(Args.LogPath, $"HoboMirror-Debug.{DateTime.Today:yyyy-MM-dd}.txt"), IO.FileMode.Append, IO.FileAccess.Write, IO.FileShare.Read), enc);
+            ActionLog = openLog($"HoboMirror-Actions.{DateTime.Today:yyyy-MM-dd}.txt");
+            ChangeLog = openLog($"HoboMirror-Changes.{DateTime.Today:yyyy-MM-dd}.txt");
+            ErrorLog = openLog($"HoboMirror-Errors.{DateTime.Today:yyyy-MM-dd}.txt");
+            CriticalErrorLog = openLog($"HoboMirror-ErrorsCritical.{DateTime.Today:yyyy-MM-dd}.txt");
+            DebugLog = openLog($"HoboMirror-Debug.{DateTime.Today:yyyy-MM-dd}.txt");
+            StreamWriter openLog(string filename) => new StreamWriter(File.Open(Path.Combine(Args.LogPath, filename), FileMode.Append, FileAccess.Write, FileShare.Read), enc);
         }
 
         try
@@ -310,7 +310,7 @@ class Program
         {
             LogError(formatError("unauthorized access"));
         }
-        catch (IO.FileNotFoundException)
+        catch (FileNotFoundException)
         {
             // Can be thrown if permissions are extremely restrictive for some reason
             LogError(formatError("file not found"));
