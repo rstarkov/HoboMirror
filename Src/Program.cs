@@ -151,8 +151,8 @@ class Program
                 foreach (var task in tasks)
                 {
                     GetOriginalSrcPath = str => str.Replace(sourcePaths[task.FromVolume], task.FromVolume).Replace(@"\\", @"\");
-                    var srcItem = CreateItem(Path.Combine(sourcePaths[task.FromVolume], task.FromPath.Substring(task.FromVolume.Length)));
-                    var tgtItem = CreateItem(task.ToPath); // must exist because we checked for the guard file
+                    var srcItem = CreateItem(Path.Combine(sourcePaths[task.FromVolume], task.FromPath.Substring(task.FromVolume.Length)).WithSlash());
+                    var tgtItem = CreateItem(task.ToPath.WithSlash()); // must exist because we checked for the guard file
                     if (srcItem != null && tgtItem != null)
                         SyncDir(srcItem, tgtItem, true);
                     else
