@@ -1,6 +1,7 @@
 ﻿using System.ComponentModel;
 using System.Runtime.InteropServices;
 using System.Security.AccessControl;
+using System.Text.RegularExpressions;
 using Microsoft.Win32.SafeHandles;
 using Windows.Wdk.Storage.FileSystem;
 using Windows.Win32;
@@ -147,30 +148,30 @@ static class Filesys
     }
 
     /// <summary>Gets file security info (owner, ACLs, inheritability) in binary form. Uses backup semantics.</summary>
-    public static byte[] GetSecurityInfo(FileInfo info)
+    public static byte[] GetSecurityInfoFile(string path)
     {
-        return info.GetAccessControl(AccessControlSections.All).GetSecurityDescriptorBinaryForm();
+        return new FileInfo(WinAPI.LongPath(path)).GetAccessControl(AccessControlSections.All).GetSecurityDescriptorBinaryForm();
     }
     /// <summary>Gets directory security info (owner, ACLs, inheritability) in binary form. Uses backup semantics.</summary>
-    public static byte[] GetSecurityInfo(DirectoryInfo info)
+    public static byte[] GetSecurityInfoDir(string path)
     {
-        return info.GetAccessControl(AccessControlSections.All).GetSecurityDescriptorBinaryForm();
+        return new DirectoryInfo(WinAPI.LongPath(path)).GetAccessControl(AccessControlSections.All).GetSecurityDescriptorBinaryForm();
     }
     /// <summary>Sets file security info (owner, ACLs, inheritability). Uses backup semantics.</summary>
-    public static void SetSecurityInfo(FileInfo info, byte[] fileSecurity)
+    public static void SetSecurityInfoFile(string path, byte[] fileSecurity)
     {
         var sec = new FileSecurity(); // per docs, must construct a new object otherwise nothing gets applied
         sec.SetSecurityDescriptorBinaryForm(fileSecurity);
-        info.SetAccessControl(sec);
+        new FileInfo(WinAPI.LongPath(path)).SetAccessControl(sec);
     }
     /// <summary>
     ///     Sets directory security info (owner, ACLs, inheritability). Uses backup semantics. Appears to apply inheriable
     ///     ACLs recursively (todo).</summary>
-    public static void SetSecurityInfo(DirectoryInfo info, byte[] fileSecurity)
+    public static void SetSecurityInfoDir(string path, byte[] fileSecurity)
     {
         var sec = new DirectorySecurity(); // per docs, must construct a new object otherwise nothing gets applied
         sec.SetSecurityDescriptorBinaryForm(fileSecurity);
-        info.SetAccessControl(sec);
+        new DirectoryInfo(WinAPI.LongPath(path)).SetAccessControl(sec);
     }
 
     /// <summary>Creates a new empty file at the specified path. Throws if the path already exists.</summary>
@@ -183,6 +184,34 @@ static class Filesys
     /// <summary>Creates a new empty directory at the specified path. Throws if the path already exists.</summary>
     public static void CreateDirectory(string path)
     {
-        Directory.CreateDirectory(WinAPI.LongPath(path)); // this deletes with backup semantics, i.e. ignoring ACLs if SeRestorePrivilege is enabled
+        Directory.CreateDirectory(WinAPI.LongPath(path)); // verified to use backup semantics, i.e. ignoring ACLs if SeRestorePrivilege is enabled
+    }
+
+    /// <summary>Lists paths contained inside the specified directory. Returns full paths.</summary>
+    public static string[] ListDirectory(string path)
+    {
+        var rootPath = untrimRootPath(path);
+        if (rootPath == path)
+            return Directory.GetFileSystemEntries(WinAPI.LongPath(path)); // verified to use backup semantics, i.e. ignoring ACLs if SeBackupPrivilege is enabled
+        // we must also fixup the paths returned as they now have an extra slash
+        return Directory.GetFileSystemEntries(rootPath)
+            .Select(p => Path.Combine(path, p[rootPath.Length..]))
+            .ToArray();
+    }
+
+    /// <summary>
+    ///     Workaround for https://github.com/dotnet/runtime/issues/119009</summary>
+    /// <remarks>
+    ///     Adds one or two backslashes if the path is a shadow copy root path. Doesn't change any other paths.</remarks>
+    private static string untrimRootPath(string path)
+    {
+        const string vssPrefix = @"\\?\GLOBALROOT\Device\HarddiskVolumeShadowCopy";
+        if (path.StartsWith(vssPrefix, StringComparison.OrdinalIgnoreCase))
+        {
+            var match = Regex.Match(path[vssPrefix.Length..], @"^[^\\]*(\\)?$");
+            if (match.Success)
+                return path + (match.Groups[1].Success ? @"\" : @"\\");
+        }
+        return path;
     }
 }

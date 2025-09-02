@@ -1,7 +1,6 @@
 ﻿using System.ComponentModel;
 using System.Reflection;
 using System.Text;
-using System.Text.RegularExpressions;
 using RT.CommandLine;
 using RT.PostBuild;
 using RT.Serialization;
@@ -152,12 +151,10 @@ class Program
                 foreach (var task in tasks)
                 {
                     GetOriginalSrcPath = str => str.Replace(sourcePaths[task.FromVolume], task.FromVolume).Replace(@"\\", @"\");
-                    if (!Directory.Exists(task.ToPath))
-                        ActCreateDirectory(task.ToPath);
-                    var srcItem = new Item(newDirectoryInfo(Path.Combine(sourcePaths[task.FromVolume], task.FromPath.Substring(task.FromVolume.Length))), ItemType.Dir);
-                    var tgtItem = CreateItem(newDirectoryInfo(task.ToPath));
-                    if (tgtItem != null)
-                        SyncDir(srcItem, tgtItem);
+                    var srcItem = CreateItem(Path.Combine(sourcePaths[task.FromVolume], task.FromPath.Substring(task.FromVolume.Length)));
+                    var tgtItem = CreateItem(task.ToPath); // must exist because we checked for the guard file
+                    if (srcItem != null && tgtItem != null)
+                        SyncDir(srcItem, tgtItem, true);
                     else
                         LogError($"Unable to execute mirror task: {task.FromPath}");
                 }
@@ -332,10 +329,10 @@ class Program
 
         var acl = TryCatchIo(() =>
         {
-            if (src.Info is FileInfo fi)
-                return Filesys.GetSecurityInfo(fi);
-            else if (src.Info is DirectoryInfo di)
-                return Filesys.GetSecurityInfo(di);
+            if (src.Type == ItemType.File || src.Type == ItemType.FileSymlink)
+                return Filesys.GetSecurityInfoFile(src.FullPath);
+            else if (src.Type == ItemType.Dir || src.Type == ItemType.DirSymlink || src.Type == ItemType.Junction)
+                return Filesys.GetSecurityInfoDir(src.FullPath);
             else
                 throw new Exception("unreachable 24961");
         }, err => $"Unable to get {src.TypeDesc} access control ({err}): {GetOriginalSrcPath(src.FullPath)}");
@@ -344,10 +341,10 @@ class Program
 
         TryCatchIo(() =>
         {
-            if (tgt.Info is FileInfo fi)
-                Filesys.SetSecurityInfo(fi, acl);
-            else if (tgt.Info is DirectoryInfo di)
-                Filesys.SetSecurityInfo(di, acl);
+            if (tgt.Type == ItemType.File || tgt.Type == ItemType.FileSymlink)
+                Filesys.SetSecurityInfoFile(tgt.FullPath, acl);
+            else if (tgt.Type == ItemType.Dir || tgt.Type == ItemType.DirSymlink || tgt.Type == ItemType.Junction)
+                Filesys.SetSecurityInfoDir(tgt.FullPath, acl);
             else
                 throw new Exception("unreachable 16943");
         }, err => $"Unable to set {tgt.TypeDesc} access control ({err}): {tgt.FullPath}");
@@ -377,12 +374,16 @@ class Program
     /// <summary>
     ///     Compares source and target directory, detects/logs changes, and updates target to match source as necessary.
     ///     Assumes that both the source and the target exist, and that both are directories.</summary>
-    private static void SyncDir(Item src, Item tgt)
+    /// <remarks>
+    ///     When toplevel is true, the items may be any combination of real dirs, junctions or directory symlinks. Otherwise
+    ///     it's always dirs. Skips copying attributes for the top level dir, only because the current implementation can't
+    ///     optionally set them on the symlink/junction target (todo).</remarks>
+    private static void SyncDir(Item src, Item tgt, bool toplevel = false)
     {
         try
         {
-            var srcItems = GetDirectoryItems(src.DirInfo);
-            var tgtItems = GetDirectoryItems(tgt.DirInfo);
+            var srcItems = GetDirectoryItems(src.FullPath);
+            var tgtItems = GetDirectoryItems(tgt.FullPath);
             if (srcItems == null || tgtItems == null)
             {
                 LogError($"Unable to mirror directory: {GetOriginalSrcPath(src.FullPath)}");
@@ -475,7 +476,7 @@ class Program
                     ActCreateJunction(tgtFullName, srcItem.Reparse);
                 else
                     throw new Exception("unreachable 49612");
-                var tgtItem = CreateItem(CreateInfo(srcItem.Type, tgtFullName));
+                var tgtItem = CreateItem(tgtFullName);
                 if (tgtItem != null)
                     tgtDict.Add(tgtItem.Name, tgtItem);
             }
@@ -495,7 +496,8 @@ class Program
                     CopyAttributes(srcItem, tgtItem);
                 }
             }
-            CopyAttributes(src, tgt);
+            if (!toplevel)
+                CopyAttributes(src, tgt);
 
             // Update statistics
             if (Settings != null)
@@ -572,7 +574,7 @@ class Program
         {
             if (tgt.Type == ItemType.Dir)
             {
-                var items = GetDirectoryItems(tgt.DirInfo);
+                var items = GetDirectoryItems(tgt.FullPath);
                 if (items == null)
                     throw new Exception("could not enumerate directory contents");
                 foreach (var item in items.OrderBy(t => t.Type == ItemType.Dir ? 2 : 1).ThenBy(t => t.Name))
@@ -633,7 +635,7 @@ class Program
     private static void ActCopyDirectory(Item srcItem, string tgtFullName)
     {
         ActCreateDirectory(tgtFullName);
-        var tgtItem = CreateItem(newDirectoryInfo(tgtFullName));
+        var tgtItem = CreateItem(tgtFullName);
         if (tgtItem == null)
         {
             LogError($"Unable to copy directory: {GetOriginalSrcPath(srcItem.FullPath)}");
@@ -669,48 +671,21 @@ class Program
     ///     and returns null (which the caller is expected to handle by skipping whatever they were going to do with this
     ///     list). If able to enumerate, will safely obtain additional info about every entry, skipping those that fail and
     ///     logging errors as appropriate.</summary>
-    private static Item[] GetDirectoryItems(DirectoryInfo dir)
+    private static Item[] GetDirectoryItems(string path)
     {
-        var infos = TryCatchIo(() => dir.GetFileSystemInfos(), err => $"Unable to list directory ({err}): {dir.FullName}");
-        if (infos == null)
+        var paths = TryCatchIo(() => Filesys.ListDirectory(path), err => $"Unable to list directory ({err}): {path}");
+        if (paths == null)
             return null;
-        return infos.Select(info => CreateItem(info)).Where(r => r != null).ToArray();
+        return paths.Select(CreateItem).Where(r => r != null).ToArray();
     }
 
     /// <summary>
     ///     Determines what type of item this filesystem entry is, while handling any potential errors. On failure, logs an
     ///     appropriate message and returns null (which the caller is expected to handle by skipping whatever they were going
     ///     to do with this item).</summary>
-    /// <remarks>
-    ///     Note that instantiating a <see cref="FileInfo"/> or <see cref="DirectoryInfo"/> is safe and will not throw, so
-    ///     only this step needs to be wrapped in an error handler.</remarks>
-    private static Item CreateItem(FileSystemInfo info)
+    private static Item CreateItem(string path)
     {
-        return TryCatchIo(() => new Item(info), err => $"Unable to determine filesystem entry type ({err}): {info.FullName}");
-    }
-
-    /// <summary>Instantiates a file system info of the appropriate type based on item type.</summary>
-    private static FileSystemInfo CreateInfo(ItemType type, string fullPath)
-    {
-        if (type == ItemType.Dir || type == ItemType.DirSymlink || type == ItemType.Junction)
-            return newDirectoryInfo(fullPath);
-        else if (type == ItemType.File || type == ItemType.FileSymlink)
-            return new FileInfo(fullPath);
-        else
-            throw new Exception("unreachable 52210");
-    }
-
-    /// <summary>Workaround for https://github.com/dotnet/runtime/issues/119009</summary>
-    private static DirectoryInfo newDirectoryInfo(string path)
-    {
-        const string vssPrefix = @"\\?\GLOBALROOT\Device\HarddiskVolumeShadowCopy";
-        if (path.StartsWith(vssPrefix, StringComparison.OrdinalIgnoreCase))
-        {
-            var match = Regex.Match(path[vssPrefix.Length..], @"^[^\\]*(\\)?$");
-            if (match.Success)
-                return new DirectoryInfo(path + (match.Groups[1].Success ? @"\" : @"\\"));
-        }
-        return new DirectoryInfo(path);
+        return TryCatchIo(() => new Item(path), err => $"Unable to determine filesystem entry type ({err}): {path}");
     }
 
     private static DateTime lastProgress;
@@ -728,10 +703,8 @@ enum ItemType { File, Dir, FileSymlink, DirSymlink, Junction }
 
 class Item
 {
-    public FileSystemInfo Info { get; private set; }
-    public DirectoryInfo DirInfo => (DirectoryInfo)Info;
-    public string FullPath => Info.FullName;
-    public string Name => Info.Name;
+    public string FullPath { get; private set; }
+    public string Name { get; private set; }
     public ItemType Type { get; private set; }
     public ReparsePointData Reparse { get; private set; } // null if not a symlink or a junction
     public FILE_BASIC_INFO Attrs { get; private set; }
@@ -739,10 +712,11 @@ class Item
     public string TypeDesc => Type == ItemType.Dir ? "directory" : Type == ItemType.DirSymlink ? "directory-symlink" : Type == ItemType.File ? "file" : Type == ItemType.FileSymlink ? "file-symlink" : Type == ItemType.Junction ? "junction" : throw new Exception("unreachable 63161");
     public override string ToString() => $"{TypeDesc}: {FullPath}{(Reparse == null ? "" : (" -> " + Reparse.SubstituteName))}";
 
-    public Item(FileSystemInfo info)
+    public Item(string path)
     {
-        Info = info;
-        using var handle = Filesys.OpenHandle(info.FullName, (uint)FILE_ACCESS_RIGHTS.FILE_READ_ATTRIBUTES);
+        FullPath = path;
+        Name = Path.GetFileName(path);
+        using var handle = Filesys.OpenHandle(FullPath, (uint)FILE_ACCESS_RIGHTS.FILE_READ_ATTRIBUTES);
         Attrs = Filesys.GetTimestampsAndAttributes(handle);
         bool isDir = (Attrs.FileAttributes & (uint)FILE_FLAGS_AND_ATTRIBUTES.FILE_ATTRIBUTE_DIRECTORY) != 0;
         Reparse = ReparsePoint.GetReparseData(handle);
@@ -763,15 +737,6 @@ class Item
             Type = ItemType.File;
             FileLength = Filesys.GetFileLength(handle);
         }
-    }
-
-    /// <summary>
-    ///     Helps create an instance for the shadow copy of the root of a volume, which presents as a reparse point but must
-    ///     be treated like a directory.</summary>
-    public Item(FileSystemInfo info, ItemType type)
-    {
-        Info = info;
-        Type = type;
     }
 
     /// <summary>
