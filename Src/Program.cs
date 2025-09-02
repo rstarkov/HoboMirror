@@ -163,25 +163,8 @@ class Program
             // List changed directories and update change counts
             LogChange("", null);
             LogChange("DIRECTORIES WITH AT LEAST ONE CHANGE:", null);
-            if (Settings == null)
-            {
-                foreach (var chg in ChangedDirs.Order())
-                    LogChange("  " + chg, null);
-            }
-            else
-            {
-                foreach (var dir in ChangedDirs)
-                    Settings.DirectoryChangeCount[dir].TimesChanged++;
-                LogChange("(sorted from rarely changing to frequently changing)", null);
-                var changes =
-                    from dir in ChangedDirs
-                    let match = Settings.GroupDirectoriesForChangeReport.Select(dg => dg.GetMatch(dir)).Where(m => m != null).MinElementOrDefault(s => s.Length)
-                    group dir by match ?? dir into grp
-                    let changeCounts = grp.Select(p => Settings.DirectoryChangeCount[p])
-                    select new { path = grp.Key, changeFreq = changeCounts.Sum(ch => ch.TimesChanged) / (double)changeCounts.Sum(ch => ch.TimesScanned) };
-                foreach (var chg in changes.OrderBy(ch => ch.changeFreq))
-                    LogChange($"  {chg.path} — {chg.changeFreq:0.0%}", null);
-            }
+            foreach (var chg in ChangedDirs.Order())
+                LogChange("  " + chg, null);
 
             if (RefreshAccessControl)
                 Settings.LastRefreshAccessControl = DateTime.UtcNow;
@@ -498,13 +481,6 @@ class Program
             }
             if (!toplevel)
                 CopyAttributes(src, tgt);
-
-            // Update statistics
-            if (Settings != null)
-            {
-                var path = GetOriginalSrcPath(src.FullPath).WithSlash();
-                Settings.DirectoryChangeCount[path].TimesScanned++;
-            }
         }
         catch (Exception e)
         {
