@@ -3,7 +3,7 @@ using System.Reflection;
 using System.Text;
 using RT.CommandLine;
 using RT.PostBuild;
-using RT.Serialization;
+using RT.Serialization.Settings;
 using RT.Util;
 using RT.Util.Consoles;
 using RT.Util.ExtensionMethods;
@@ -19,7 +19,8 @@ namespace HoboMirror;
 class Program
 {
     static CmdLine Args;
-    static Settings Settings;
+    static SettingsFileJson<Settings> SettingsFile = null;
+    static Settings Settings => SettingsFile?.Settings; // can be null if running without settings file command option
     static bool UseVolumeShadowCopy = true;
     static bool RefreshAccessControl = true;
     static bool UpdateMetadata = true;
@@ -64,13 +65,7 @@ class Program
         // Load settings file
         if (Args.SettingsPath != null)
         {
-            if (File.Exists(Args.SettingsPath))
-                Settings = ClassifyJson.DeserializeFile<Settings>(Args.SettingsPath);
-            else
-            {
-                Settings = new Settings();
-                ClassifyJson.SerializeToFile(Settings, Args.SettingsPath);
-            }
+            SettingsFile = new(throwOnError: true, Args.SettingsPath);
             RefreshAccessControl = Settings.SkipRefreshAccessControlDays == null || (Settings.LastRefreshAccessControl + TimeSpan.FromDays((double)Settings.SkipRefreshAccessControlDays) < DateTime.UtcNow);
             Console.WriteLine($"Refresh access control: {RefreshAccessControl}");
             Console.WriteLine($"Update metadata: {UpdateMetadata}");
@@ -143,9 +138,9 @@ class Program
                     var fromPath = Path.Combine(sourcePaths[task.FromVolume], task.FromPath.Substring(task.FromVolume.Length));
                     LogAll($"    Mirror task: from “{task.FromPath}” to “{task.ToPath}” (volume snapshot path: {fromPath})");
                 }
-                foreach (var ignore in Args.IgnorePath.Concat(Settings.IgnorePaths).Order())
+                foreach (var ignore in Args.IgnorePath.Concat(Settings?.IgnorePaths ?? []).Order())
                     LogAll($"    Ignore path: “{ignore}”");
-                foreach (var ignore in Settings.IgnoreDirNames)
+                foreach (var ignore in Settings?.IgnoreDirNames ?? [])
                     LogAll($"    Ignore directory name: “{ignore}”");
 
                 foreach (var task in tasks)
@@ -166,12 +161,13 @@ class Program
             foreach (var chg in ChangedDirs.Order())
                 LogChange("  " + chg, null);
 
-            if (RefreshAccessControl)
-                Settings.LastRefreshAccessControl = DateTime.UtcNow;
-
-            // Save settings file
-            if (Args.SettingsPath != null)
-                ClassifyJson.SerializeToFile(Settings, Args.SettingsPath);
+            // Update settings file
+            if (Settings != null)
+            {
+                if (RefreshAccessControl)
+                    Settings.LastRefreshAccessControl = DateTime.UtcNow;
+                SettingsFile.Save();
+            }
 
             return CriticalErrors > 0 ? 2 : Errors > 0 ? 1 : 0;
         }
@@ -381,12 +377,12 @@ class Program
             // Ignore paths as requested: pretend they don't exist in source, which gets them deleted in target if present
             foreach (var srcItem in srcDict.Values.ToList())
             {
-                if (Args.IgnorePath.Concat(Settings.IgnorePaths).Any(ignore => PathsEqual(GetOriginalSrcPath(srcItem.FullPath), ignore)))
+                if (Args.IgnorePath.Concat(Settings?.IgnorePaths ?? []).Any(ignore => PathsEqual(GetOriginalSrcPath(srcItem.FullPath), ignore)))
                 {
                     LogAction($"Ignoring path: {GetOriginalSrcPath(srcItem.FullPath)}");
                     srcDict.Remove(srcItem.Name);
                 }
-                else if (srcItem.Type == ItemType.Dir && Settings.IgnoreDirNames.Any(ignore => ignore.EqualsIgnoreCase(srcItem.Name)))
+                else if (srcItem.Type == ItemType.Dir && (Settings?.IgnoreDirNames ?? []).Any(ignore => ignore.EqualsIgnoreCase(srcItem.Name)))
                 {
                     LogAction($"Ignoring directory name: {GetOriginalSrcPath(srcItem.FullPath)}");
                     srcDict.Remove(srcItem.Name);
