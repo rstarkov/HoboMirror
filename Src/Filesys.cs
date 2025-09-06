@@ -44,6 +44,16 @@ static class Filesys
         return info;
     }
 
+    /// <summary>
+    ///     Sets timestamps and attributes for path. Uses backup semantics to bypass access control checks (requires
+    ///     SeBackup/SeRestore). For reparse points, updates the reparse point itself, not its target.</summary>
+    public static unsafe void SetTimestampsAndAttributes(string path, FILE_BASIC_INFO info)
+    {
+        using var handle = WinAPI.CreateFile(path, (uint)FILE_ACCESS_RIGHTS.FILE_WRITE_ATTRIBUTES, FileShareAll, null, FileDispExisting, Semantics, null);
+        if (!PInvoke.SetFileInformationByHandle(handle, FILE_INFO_BY_HANDLE_CLASS.FileBasicInfo, &info, (uint)Marshal.SizeOf<FILE_BASIC_INFO>()))
+            throw new Win32Exception();
+    }
+
     public static long GetFileLength(string path)
     {
         using var handle = WinAPI.CreateFile(path, (uint)FILE_ACCESS_RIGHTS.FILE_READ_ATTRIBUTES, FileShareAll, null, FileDispExisting, Semantics, null);
@@ -54,16 +64,6 @@ static class Filesys
         if (!PInvoke.GetFileSizeEx(handle, out var lpFileSize))
             throw new Win32Exception();
         return lpFileSize;
-    }
-
-    /// <summary>
-    ///     Sets timestamps and attributes for path. Uses backup semantics to bypass access control checks (requires
-    ///     SeBackup/SeRestore). For reparse points, updates the reparse point itself, not its target.</summary>
-    public static unsafe void SetTimestampsAndAttributes(string path, FILE_BASIC_INFO info)
-    {
-        using var handle = WinAPI.CreateFile(path, (uint)FILE_ACCESS_RIGHTS.FILE_WRITE_ATTRIBUTES, FileShareAll, null, FileDispExisting, Semantics, null);
-        if (!PInvoke.SetFileInformationByHandle(handle, FILE_INFO_BY_HANDLE_CLASS.FileBasicInfo, &info, (uint)Marshal.SizeOf<FILE_BASIC_INFO>()))
-            throw new Win32Exception();
     }
 
     /// <summary>
