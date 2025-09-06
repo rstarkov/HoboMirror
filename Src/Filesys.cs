@@ -91,6 +91,7 @@ static class Filesys
     public static unsafe void Rename(string path, string newpath, bool overwrite = false)
     {
         using var handle = WinAPI.CreateFile(path, (uint)FILE_ACCESS_RIGHTS.DELETE, FileShareAll, null, FileDispExisting, Semantics, null);
+        newpath = WinAPI.LongPath(newpath);
         int bufbytes = FILE_RENAME_INFO.SizeOf(newpath.Length + 1); // including null terminator (though this SizeOf over-estimates size due to alignment)
         byte* buf = stackalloc byte[bufbytes];
         FILE_RENAME_INFO* info = (FILE_RENAME_INFO*)buf;
