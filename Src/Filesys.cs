@@ -225,11 +225,9 @@ static class Filesys
     public static string[] ListDirectory(string path)
     {
         var rootPath = untrimRootPath(path);
-        if (rootPath == path)
-            return Directory.GetFileSystemEntries(LongPath(path)); // verified to use backup semantics, i.e. ignoring ACLs if SeBackupPrivilege is enabled
-        // we must also fixup the paths returned as they now have an extra slash
-        return Directory.GetFileSystemEntries(rootPath)
-            .Select(p => Path.Combine(path, p[rootPath.Length..]))
+        // we must fixup the paths returned as they may contain an extra slash if "untrimmed"
+        return new DirectoryInfo(LongPath(rootPath)).EnumerateFileSystemInfos() // verified to use backup semantics, i.e. ignoring ACLs if SeBackupPrivilege is enabled
+            .Select(p => Path.Combine(path, p.Name))
             .ToArray();
     }
 
