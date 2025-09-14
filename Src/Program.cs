@@ -558,8 +558,10 @@ class Program
             }
             else
             {
-                LogAction($"Delete {tgt.TypeDesc}: {tgt.FullPath}");
-                Filesys.Delete(tgt.FullPath);
+                TryCatchIoAction($"delete {tgt.TypeDesc}", tgt.FullPath, () =>
+                {
+                    Filesys.Delete(tgt.FullPath);
+                });
             }
         }, err => $"Unable to delete {tgt.TypeDesc} ({err}): {tgt.FullPath}");
     }
