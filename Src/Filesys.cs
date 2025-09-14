@@ -81,9 +81,9 @@ static class Filesys
     public static unsafe void Delete(string path)
     {
         using var handle = WinAPI.CreateFile(path, (uint)FILE_ACCESS_RIGHTS.DELETE, FileShareAll, null, FileDispExisting, Semantics, null);
-        FILE_DISPOSITION_INFORMATION_EX info;
-        info.Flags = FILE_DISPOSITION_INFORMATION_EX_FLAGS.FILE_DISPOSITION_DELETE | FILE_DISPOSITION_INFORMATION_EX_FLAGS.FILE_DISPOSITION_IGNORE_READONLY_ATTRIBUTE;
-        if (!PInvoke.SetFileInformationByHandle(handle, FILE_INFO_BY_HANDLE_CLASS.FileDispositionInfoEx, &info, (uint)Marshal.SizeOf<FILE_DISPOSITION_INFORMATION_EX>()))
+        FILE_DISPOSITION_INFO_EX info;
+        info.Flags = FILE_DISPOSITION_INFO_EX_FLAGS.FILE_DISPOSITION_FLAG_DELETE | FILE_DISPOSITION_INFO_EX_FLAGS.FILE_DISPOSITION_FLAG_IGNORE_READONLY_ATTRIBUTE;
+        if (!PInvoke.SetFileInformationByHandle(handle, FILE_INFO_BY_HANDLE_CLASS.FileDispositionInfoEx, &info, (uint)Marshal.SizeOf<FILE_DISPOSITION_INFO_EX>()))
             throw new Win32Exception();
     }
 
@@ -94,7 +94,7 @@ static class Filesys
     ///     If true, will overwrite an existing file at the target path (throws otherwise). If the target is a directory, an
     ///     overwrite attempt fails with "access denied". A directory rename can "overwrite" a file, deleting the file. The
     ///     overwrite employs backup semantics too, and successfully bypasses access control checks (requires
-    ///     SeBackup/SeRestore).</param>
+    ///     SeBackup/SeRestore). Read-only flag is ignored on overwrite.</param>
     public static unsafe void Rename(string path, string newpath, bool overwrite = false)
     {
         using var handle = WinAPI.CreateFile(path, (uint)FILE_ACCESS_RIGHTS.DELETE, FileShareAll, null, FileDispExisting, Semantics, null);
@@ -102,13 +102,13 @@ static class Filesys
         int bufbytes = FILE_RENAME_INFO.SizeOf(newpath.Length + 1); // including null terminator (though this SizeOf over-estimates size due to alignment)
         byte* buf = stackalloc byte[bufbytes];
         FILE_RENAME_INFO* info = (FILE_RENAME_INFO*)buf;
-        info->Anonymous.ReplaceIfExists = overwrite;
+        info->Anonymous.Flags = overwrite ? 0x41u /*FILE_RENAME_REPLACE_IF_EXISTS | FILE_RENAME_IGNORE_READONLY_ATTRIBUTE */ : 0u;
         info->RootDirectory = HANDLE.Null;
         info->FileNameLength = (uint)(newpath.Length * 2); // in bytes, excluding null terminator (though the API appears to ignore this and relies on the null terminator)
         var tgtSpan = info->FileName.AsSpan(newpath.Length + 1); // including null terminator
         newpath.AsSpan().CopyTo(tgtSpan);
         tgtSpan[newpath.Length] = '\0';
-        if (!PInvoke.SetFileInformationByHandle(handle, FILE_INFO_BY_HANDLE_CLASS.FileRenameInfo, info, (uint)bufbytes))
+        if (!PInvoke.SetFileInformationByHandle(handle, FILE_INFO_BY_HANDLE_CLASS.FileRenameInfoEx, info, (uint)bufbytes))
             throw new Win32Exception();
     }
 

@@ -17,7 +17,7 @@ GetFileInformationByHandleEx
 SetFileInformationByHandle
 FILE_BASIC_INFO
 FILE_RENAME_INFO
-FILE_DISPOSITION_INFORMATION_EX
+FILE_DISPOSITION_INFO_EX
 CopyFile2
 GetVolumePathName
 GetVolumePathNamesForVolumeName
