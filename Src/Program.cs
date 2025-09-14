@@ -683,7 +683,7 @@ class Item
         using var handle = Filesys.OpenHandle(FullPath, (uint)FILE_ACCESS_RIGHTS.FILE_READ_ATTRIBUTES);
         Attrs = Filesys.GetTimestampsAndAttributes(handle);
         bool isDir = (Attrs.FileAttributes & (uint)FILE_FLAGS_AND_ATTRIBUTES.FILE_ATTRIBUTE_DIRECTORY) != 0;
-        Reparse = ReparsePoint.GetReparseData(handle);
+        Reparse = (Attrs.FileAttributes & (uint)FILE_FLAGS_AND_ATTRIBUTES.FILE_ATTRIBUTE_REPARSE_POINT) != 0 ? ReparsePoint.GetReparseData(handle) : null;
         FileLength = 0;
         if (Reparse != null)
         {
