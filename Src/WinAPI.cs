@@ -5,7 +5,6 @@ using RT.Util.ExtensionMethods;
 using Windows.Win32;
 using Windows.Win32.Foundation;
 using Windows.Win32.Security;
-using Windows.Win32.Storage.FileSystem;
 
 namespace HoboMirror;
 
@@ -94,25 +93,6 @@ static class WinAPI
         if (!PInvoke.GetVolumePathName(path, result))
             throw new Win32Exception();
         return Ptr.SpanFromNullStr(result).ToString();
-    }
-
-    /// <summary>Calls PInvoke.CreateFile. Handles long paths, and ensures the handle is valid or throws.</summary>
-    public static unsafe SafeFileHandle CreateFile(string lpFileName, uint dwDesiredAccess, FILE_SHARE_MODE dwShareMode, SECURITY_ATTRIBUTES? lpSecurityAttributes, FILE_CREATION_DISPOSITION dwCreationDisposition, FILE_FLAGS_AND_ATTRIBUTES dwFlagsAndAttributes, SafeHandle hTemplateFile)
-    {
-        var handle = PInvoke.CreateFile(LongPath(lpFileName), dwDesiredAccess, dwShareMode, lpSecurityAttributes, dwCreationDisposition, dwFlagsAndAttributes, hTemplateFile);
-        if (handle.IsInvalid)
-            throw new Win32Exception();
-        return handle;
-    }
-
-    /// <summary>
-    ///     Disables path processing by prefixing with \\?\. This enables long file paths on older systems without the global
-    ///     enable, and also allows weird paths such as "foo." or "foo " to be mirrored as-is.</summary>
-    public static string LongPath(string path)
-    {
-        if (!path.StartsWith(@"\"))
-            path = @"\\?\" + path;
-        return path;
     }
 }
 

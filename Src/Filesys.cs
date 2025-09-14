@@ -5,6 +5,7 @@ using System.Text.RegularExpressions;
 using Microsoft.Win32.SafeHandles;
 using Windows.Win32;
 using Windows.Win32.Foundation;
+using Windows.Win32.Security;
 using Windows.Win32.Storage.FileSystem;
 
 namespace HoboMirror;
@@ -19,9 +20,28 @@ static class Filesys
     private const FILE_CREATION_DISPOSITION FileDispNew = FILE_CREATION_DISPOSITION.CREATE_NEW;
     private const FILE_FLAGS_AND_ATTRIBUTES Semantics = FILE_FLAGS_AND_ATTRIBUTES.FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAGS_AND_ATTRIBUTES.FILE_FLAG_OPEN_REPARSE_POINT;
 
+    /// <summary>Calls PInvoke.CreateFile. Handles long paths, and ensures the handle is valid or throws.</summary>
+    private static unsafe SafeFileHandle CreateFile(string lpFileName, uint dwDesiredAccess, FILE_SHARE_MODE dwShareMode, SECURITY_ATTRIBUTES? lpSecurityAttributes, FILE_CREATION_DISPOSITION dwCreationDisposition, FILE_FLAGS_AND_ATTRIBUTES dwFlagsAndAttributes, SafeHandle hTemplateFile)
+    {
+        var handle = PInvoke.CreateFile(LongPath(lpFileName), dwDesiredAccess, dwShareMode, lpSecurityAttributes, dwCreationDisposition, dwFlagsAndAttributes, hTemplateFile);
+        if (handle.IsInvalid)
+            throw new Win32Exception();
+        return handle;
+    }
+
+    /// <summary>
+    ///     Disables path processing by prefixing with \\?\. This enables long file paths on older systems without the global
+    ///     enable, and also allows weird paths such as "foo." or "foo " to be mirrored as-is.</summary>
+    private static string LongPath(string path)
+    {
+        if (!path.StartsWith(@"\"))
+            path = @"\\?\" + path;
+        return path;
+    }
+
     public static SafeFileHandle OpenHandle(string path, uint dwDesiredAccess)
     {
-        return WinAPI.CreateFile(path, dwDesiredAccess, FileShareAll, null, FileDispExisting, Semantics, null);
+        return CreateFile(path, dwDesiredAccess, FileShareAll, null, FileDispExisting, Semantics, null);
     }
 
     /// <summary>
@@ -29,7 +49,7 @@ static class Filesys
     ///     SeBackup/SeRestore). For reparse points, reads the reparse point itself, not its target.</summary>
     public static FILE_BASIC_INFO GetTimestampsAndAttributes(string path)
     {
-        using var handle = WinAPI.CreateFile(path, (uint)FILE_ACCESS_RIGHTS.FILE_READ_ATTRIBUTES, FileShareAll, null, FileDispExisting, Semantics, null);
+        using var handle = CreateFile(path, (uint)FILE_ACCESS_RIGHTS.FILE_READ_ATTRIBUTES, FileShareAll, null, FileDispExisting, Semantics, null);
         return GetTimestampsAndAttributes(handle);
     }
     /// <summary>
@@ -48,7 +68,7 @@ static class Filesys
     ///     SeBackup/SeRestore). For reparse points, updates the reparse point itself, not its target.</summary>
     public static unsafe void SetTimestampsAndAttributes(string path, FILE_BASIC_INFO info)
     {
-        using var handle = WinAPI.CreateFile(path, (uint)FILE_ACCESS_RIGHTS.FILE_WRITE_ATTRIBUTES, FileShareAll, null, FileDispExisting, Semantics, null);
+        using var handle = CreateFile(path, (uint)FILE_ACCESS_RIGHTS.FILE_WRITE_ATTRIBUTES, FileShareAll, null, FileDispExisting, Semantics, null);
         SetTimestampsAndAttributes(handle, info);
     }
     /// <summary>
@@ -62,7 +82,7 @@ static class Filesys
 
     public static long GetFileLength(string path)
     {
-        using var handle = WinAPI.CreateFile(path, (uint)FILE_ACCESS_RIGHTS.FILE_READ_ATTRIBUTES, FileShareAll, null, FileDispExisting, Semantics, null);
+        using var handle = CreateFile(path, (uint)FILE_ACCESS_RIGHTS.FILE_READ_ATTRIBUTES, FileShareAll, null, FileDispExisting, Semantics, null);
         return GetFileLength(handle);
     }
     public static unsafe long GetFileLength(SafeFileHandle handle)
@@ -79,7 +99,7 @@ static class Filesys
     ///     non-empty directories (throws).</summary>
     public static unsafe void Delete(string path)
     {
-        using var handle = WinAPI.CreateFile(path, (uint)FILE_ACCESS_RIGHTS.DELETE, FileShareAll, null, FileDispExisting, Semantics, null);
+        using var handle = CreateFile(path, (uint)FILE_ACCESS_RIGHTS.DELETE, FileShareAll, null, FileDispExisting, Semantics, null);
         FILE_DISPOSITION_INFO_EX info;
         info.Flags = FILE_DISPOSITION_INFO_EX_FLAGS.FILE_DISPOSITION_FLAG_DELETE | FILE_DISPOSITION_INFO_EX_FLAGS.FILE_DISPOSITION_FLAG_IGNORE_READONLY_ATTRIBUTE;
         if (!PInvoke.SetFileInformationByHandle(handle, FILE_INFO_BY_HANDLE_CLASS.FileDispositionInfoEx, &info, (uint)Marshal.SizeOf<FILE_DISPOSITION_INFO_EX>()))
@@ -96,8 +116,8 @@ static class Filesys
     ///     SeBackup/SeRestore). Read-only flag is ignored on overwrite.</param>
     public static unsafe void Rename(string path, string newpath, bool overwrite = false)
     {
-        using var handle = WinAPI.CreateFile(path, (uint)FILE_ACCESS_RIGHTS.DELETE, FileShareAll, null, FileDispExisting, Semantics, null);
-        newpath = WinAPI.LongPath(newpath);
+        using var handle = CreateFile(path, (uint)FILE_ACCESS_RIGHTS.DELETE, FileShareAll, null, FileDispExisting, Semantics, null);
+        newpath = LongPath(newpath);
         int bufbytes = FILE_RENAME_INFO.SizeOf(newpath.Length + 1); // including null terminator (though this SizeOf over-estimates size due to alignment)
         byte* buf = stackalloc byte[bufbytes];
         FILE_RENAME_INFO* info = (FILE_RENAME_INFO*)buf;
@@ -119,8 +139,8 @@ static class Filesys
     public static unsafe void CopyFile(string source, string destination, Action<CopyFileProgress> progress = null)
     {
         var semantics = FILE_FLAGS_AND_ATTRIBUTES.FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAGS_AND_ATTRIBUTES.FILE_FLAG_SEQUENTIAL_SCAN;
-        using var srcH = WinAPI.CreateFile(source, (uint)GENERIC_ACCESS_RIGHTS.GENERIC_READ, FileShareAll, null, FileDispExisting, semantics, null);
-        using var dstH = WinAPI.CreateFile(destination, (uint)GENERIC_ACCESS_RIGHTS.GENERIC_WRITE, FileShareAll, null, FileDispNew, semantics, null);
+        using var srcH = CreateFile(source, (uint)GENERIC_ACCESS_RIGHTS.GENERIC_READ, FileShareAll, null, FileDispExisting, semantics, null);
+        using var dstH = CreateFile(destination, (uint)GENERIC_ACCESS_RIGHTS.GENERIC_WRITE, FileShareAll, null, FileDispNew, semantics, null);
         if (!PInvoke.GetFileSizeEx(srcH, out var filesize))
             throw new Win32Exception();
 
@@ -159,19 +179,19 @@ static class Filesys
     /// <summary>Gets file security info (owner, ACLs, inheritability) in binary form. Uses backup semantics.</summary>
     public static byte[] GetSecurityInfoFile(string path)
     {
-        return new FileInfo(WinAPI.LongPath(path)).GetAccessControl(AccessControlSections.All).GetSecurityDescriptorBinaryForm();
+        return new FileInfo(LongPath(path)).GetAccessControl(AccessControlSections.All).GetSecurityDescriptorBinaryForm();
     }
     /// <summary>Gets directory security info (owner, ACLs, inheritability) in binary form. Uses backup semantics.</summary>
     public static byte[] GetSecurityInfoDir(string path)
     {
-        return new DirectoryInfo(WinAPI.LongPath(path)).GetAccessControl(AccessControlSections.All).GetSecurityDescriptorBinaryForm();
+        return new DirectoryInfo(LongPath(path)).GetAccessControl(AccessControlSections.All).GetSecurityDescriptorBinaryForm();
     }
     /// <summary>Sets file security info (owner, ACLs, inheritability). Uses backup semantics.</summary>
     public static void SetSecurityInfoFile(string path, byte[] fileSecurity)
     {
         var sec = new FileSecurity(); // per docs, must construct a new object otherwise nothing gets applied
         sec.SetSecurityDescriptorBinaryForm(fileSecurity);
-        new FileInfo(WinAPI.LongPath(path)).SetAccessControl(sec);
+        new FileInfo(LongPath(path)).SetAccessControl(sec);
     }
     /// <summary>
     ///     Sets directory security info (owner, ACLs, inheritability). Uses backup semantics. Appears to apply inheriable
@@ -180,20 +200,20 @@ static class Filesys
     {
         var sec = new DirectorySecurity(); // per docs, must construct a new object otherwise nothing gets applied
         sec.SetSecurityDescriptorBinaryForm(fileSecurity);
-        new DirectoryInfo(WinAPI.LongPath(path)).SetAccessControl(sec);
+        new DirectoryInfo(LongPath(path)).SetAccessControl(sec);
     }
 
     /// <summary>Creates a new empty file at the specified path. Throws if the path already exists.</summary>
     public static void CreateFile(string path)
     {
-        using var handle = WinAPI.CreateFile(path, (uint)FILE_ACCESS_RIGHTS.FILE_GENERIC_WRITE, FileShareAll, null,
+        using var handle = CreateFile(path, (uint)FILE_ACCESS_RIGHTS.FILE_GENERIC_WRITE, FileShareAll, null,
             FILE_CREATION_DISPOSITION.CREATE_NEW, Semantics, null);
     }
 
     /// <summary>Creates a new empty directory at the specified path. Throws if the path already exists.</summary>
     public static void CreateDirectory(string path)
     {
-        Directory.CreateDirectory(WinAPI.LongPath(path)); // verified to use backup semantics, i.e. ignoring ACLs if SeRestorePrivilege is enabled
+        Directory.CreateDirectory(LongPath(path)); // verified to use backup semantics, i.e. ignoring ACLs if SeRestorePrivilege is enabled
     }
 
     /// <summary>Lists paths contained inside the specified directory. Returns full paths.</summary>
@@ -201,7 +221,7 @@ static class Filesys
     {
         var rootPath = untrimRootPath(path);
         if (rootPath == path)
-            return Directory.GetFileSystemEntries(WinAPI.LongPath(path)); // verified to use backup semantics, i.e. ignoring ACLs if SeBackupPrivilege is enabled
+            return Directory.GetFileSystemEntries(LongPath(path)); // verified to use backup semantics, i.e. ignoring ACLs if SeBackupPrivilege is enabled
         // we must also fixup the paths returned as they now have an extra slash
         return Directory.GetFileSystemEntries(rootPath)
             .Select(p => Path.Combine(path, p[rootPath.Length..]))
