@@ -79,8 +79,7 @@ class VolumeShadowCopy : IDisposable
             {
                 Program.LogAction($"Creating VSS snapshot for {volume}...");
                 Snapshots[volume] = Vss.CreateSnapshot(volume);
-                Program.LogAction("   done.");
-                Program.LogDebug($"Volume {volume} [aka {Snapshots[volume].VolumeDisplayPath}, unique {Snapshots[volume].VolumeGuidPath}] snapshot UNC: {Snapshots[volume].SnapshotPath}");
+                Program.LogAction($"  done: volume {volume} [aka {Snapshots[volume].VolumeDisplayPath}, unique {Snapshots[volume].VolumeGuidPath}] snapshot UNC: {Snapshots[volume].SnapshotPath}");
             }
         }
         catch

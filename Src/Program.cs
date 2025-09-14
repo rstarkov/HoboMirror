@@ -27,7 +27,7 @@ class Program
     static int Errors = 0;
     static int CriticalErrors = 0;
 
-    static StreamWriter ActionLog, ChangeLog, ErrorLog, CriticalErrorLog, DebugLog;
+    static StreamWriter ActionLog, ChangeLog, ErrorLog, CriticalErrorLog;
 
     static int Main(string[] args)
     {
@@ -82,7 +82,6 @@ class Program
             ChangeLog = openLog($"HoboMirror-Changes.{DateTime.Today:yyyy-MM-dd}.txt");
             ErrorLog = openLog($"HoboMirror-Errors.{DateTime.Today:yyyy-MM-dd}.txt");
             CriticalErrorLog = openLog($"HoboMirror-ErrorsCritical.{DateTime.Today:yyyy-MM-dd}.txt");
-            DebugLog = openLog($"HoboMirror-Debug.{DateTime.Today:yyyy-MM-dd}.txt");
             StreamWriter openLog(string filename) => new StreamWriter(File.Open(Path.Combine(Args.LogPath, filename), FileMode.Append, FileAccess.Write, FileShare.Read), enc);
         }
 
@@ -133,15 +132,16 @@ class Program
             using (var vsc = UseVolumeShadowCopy ? new VolumeShadowCopy(volumes) : null)
             {
                 var sourcePaths = UseVolumeShadowCopy ? vsc.Snapshots.ToDictionary(kvp => kvp.Key, kvp => kvp.Value.SnapshotPath) : volumes.ToDictionary(vol => vol, vol => vol);
+                LogAction($"Configuration:");
                 foreach (var task in tasks)
                 {
                     var fromPath = Path.Combine(sourcePaths[task.FromVolume], task.FromPath.Substring(task.FromVolume.Length));
-                    LogAll($"    Mirror task: from “{task.FromPath}” to “{task.ToPath}” (volume snapshot path: {fromPath})");
+                    LogAction($"  mirror task: from “{task.FromPath}” to “{task.ToPath}” (volume snapshot path: {fromPath})");
                 }
                 foreach (var ignore in Args.IgnorePath.Concat(Settings?.IgnorePaths ?? []).Order())
-                    LogAll($"    Ignore path: “{ignore}”");
+                    LogAction($"  ignore path: “{ignore}”");
                 foreach (var ignore in Settings?.IgnoreDirNames ?? [])
-                    LogAll($"    Ignore directory name: “{ignore}”");
+                    LogAction($"  ignore directory name: “{ignore}”");
 
                 foreach (var task in tasks)
                 {
@@ -184,7 +184,7 @@ class Program
             // Close log files
             if (Args.LogPath != null)
             {
-                foreach (var log in new[] { ActionLog, ChangeLog, ErrorLog, CriticalErrorLog, DebugLog })
+                foreach (var log in new[] { ActionLog, ChangeLog, ErrorLog, CriticalErrorLog })
                 {
                     log.WriteLine($"Ended at {DateTime.Now}. Time taken: {(DateTime.UtcNow - startTime).TotalMinutes:#,0.0} minutes");
                     log.Dispose();
@@ -226,13 +226,6 @@ class Program
         CriticalErrorLog?.Flush();
     }
 
-    public static void LogDebug(string text)
-    {
-        //ConsoleUtil.WriteParagraphs(text.Color(ConsoleColor.DarkGray));
-        DebugLog?.WriteLine(text);
-        DebugLog?.Flush();
-    }
-
     public static void LogAll(string text)
     {
         ConsoleUtil.WriteParagraphs(text.Color(ConsoleColor.Green));
@@ -244,8 +237,6 @@ class Program
         ErrorLog?.Flush();
         CriticalErrorLog?.WriteLine(text);
         CriticalErrorLog?.Flush();
-        DebugLog?.WriteLine(text);
-        DebugLog?.Flush();
     }
 
     private static HashSet<string> ChangedDirs = new HashSet<string>();
@@ -379,12 +370,12 @@ class Program
             {
                 if (Args.IgnorePath.Concat(Settings?.IgnorePaths ?? []).Any(ignore => PathsEqual(GetOriginalSrcPath(srcItem.FullPath), ignore)))
                 {
-                    LogAction($"Ignoring path: {GetOriginalSrcPath(srcItem.FullPath)}");
+                    LogAction($"ignoring path: {GetOriginalSrcPath(srcItem.FullPath)}");
                     srcDict.Remove(srcItem.Name);
                 }
                 else if (srcItem.Type == ItemType.Dir && (Settings?.IgnoreDirNames ?? []).Any(ignore => ignore.EqualsIgnoreCase(srcItem.Name)))
                 {
-                    LogAction($"Ignoring directory name: {GetOriginalSrcPath(srcItem.FullPath)}");
+                    LogAction($"ignoring directory name: {GetOriginalSrcPath(srcItem.FullPath)}");
                     srcDict.Remove(srcItem.Name);
                 }
             }
@@ -401,8 +392,7 @@ class Program
                 var srcItem = srcDict.Get(tgtItem.Name, null);
                 if (srcItem != null && srcItem.Type == tgtItem.Type)
                     continue;
-                Console.Title = GetOriginalSrcPath(src.FullPathWithName(tgtItem.Name)) + " (delete)";
-
+                Console.Title = GetOriginalSrcPath(Path.Combine(src.FullPath, tgtItem.Name)) + " (delete)";
                 if (srcItem == null)
                     LogChange($"Found deleted {tgtItem.TypeDesc}: ", GetOriginalSrcPath(Path.Combine(src.FullPath, tgtItem.Name)));
                 else
@@ -493,7 +483,7 @@ class Program
     {
         if (src.Attrs.LastWriteTime == tgt.Attrs.LastWriteTime && src.FileLength == tgt.FileLength)
             return;
-        LogChange($"Found a modified file: ", GetOriginalSrcPath(src.FullPath), whatChanged: $"\r\n    length: {tgt.FileLength:#,0} -> {src.FileLength:#,0}\r\n    modified: {DateTime.FromFileTimeUtc(tgt.Attrs.LastWriteTime)} -> {DateTime.FromFileTimeUtc(src.Attrs.LastWriteTime)} (UTC)");
+        LogChange($"Found modified file: ", GetOriginalSrcPath(src.FullPath), whatChanged: $"\r\n    length: {tgt.FileLength:#,0} -> {src.FileLength:#,0}\r\n    modified: {DateTime.FromFileTimeUtc(tgt.Attrs.LastWriteTime)} -> {DateTime.FromFileTimeUtc(src.Attrs.LastWriteTime)} (UTC)");
         ActCopyOrReplaceFile(src.FullPath, tgt.FullPathWithName(src.Name));
     }
 
@@ -506,7 +496,7 @@ class Program
         var tgtR = tgt.Reparse;
         if (srcR.SubstituteName == tgtR.SubstituteName && srcR.PrintName == tgtR.PrintName && srcR.IsSymlinkRelative == tgtR.IsSymlinkRelative)
             return;
-        LogChange($"Found a modified {src.TypeDesc}: ", GetOriginalSrcPath(src.FullPath), whatChanged: $"\r\n    target: {tgtR.SubstituteName} -> {srcR.SubstituteName}\r\n    print name: {tgtR.PrintName} -> {srcR.PrintName}\r\n    relative: {tgtR.IsSymlinkRelative} -> {srcR.IsSymlinkRelative}");
+        LogChange($"Found modified {src.TypeDesc}: ", GetOriginalSrcPath(src.FullPath), whatChanged: $"\r\n    target: {tgtR.SubstituteName} -> {srcR.SubstituteName}\r\n    print name: {tgtR.PrintName} -> {srcR.PrintName}\r\n    relative: {tgtR.IsSymlinkRelative} -> {srcR.IsSymlinkRelative}");
         ActDelete(tgt);
         ActCreateFileSymlink(tgt.FullPathWithName(src.Name), srcR);
     }
@@ -520,7 +510,7 @@ class Program
         var tgtR = tgt.Reparse;
         if (srcR.SubstituteName == tgtR.SubstituteName && srcR.PrintName == tgtR.PrintName && srcR.IsSymlinkRelative == tgtR.IsSymlinkRelative)
             return;
-        LogChange($"Found a modified {src.TypeDesc}: ", GetOriginalSrcPath(src.FullPath), whatChanged: $"\r\n    target: {tgtR.SubstituteName} -> {srcR.SubstituteName}\r\n    print name: {tgtR.PrintName} -> {srcR.PrintName}\r\n    relative: {tgtR.IsSymlinkRelative} -> {srcR.IsSymlinkRelative}");
+        LogChange($"Found modified {src.TypeDesc}: ", GetOriginalSrcPath(src.FullPath), whatChanged: $"\r\n    target: {tgtR.SubstituteName} -> {srcR.SubstituteName}\r\n    print name: {tgtR.PrintName} -> {srcR.PrintName}\r\n    relative: {tgtR.IsSymlinkRelative} -> {srcR.IsSymlinkRelative}");
         ActDelete(tgt);
         ActCreateDirSymlink(tgt.FullPathWithName(src.Name), srcR);
     }
@@ -534,7 +524,7 @@ class Program
         var tgtR = tgt.Reparse;
         if (srcR.SubstituteName == tgtR.SubstituteName && srcR.PrintName == tgtR.PrintName)
             return;
-        LogChange($"Found a modified {src.TypeDesc}: ", GetOriginalSrcPath(src.FullPath), whatChanged: $"\r\n    target: {tgtR.SubstituteName} -> {srcR.SubstituteName}\r\n    print name: {tgtR.PrintName} -> {srcR.PrintName}");
+        LogChange($"Found modified {src.TypeDesc}: ", GetOriginalSrcPath(src.FullPath), whatChanged: $"\r\n    target: {tgtR.SubstituteName} -> {srcR.SubstituteName}\r\n    print name: {tgtR.PrintName} -> {srcR.PrintName}");
         ActDelete(tgt);
         ActCreateJunction(tgt.FullPathWithName(src.Name), srcR);
     }
