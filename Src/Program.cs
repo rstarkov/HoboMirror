@@ -87,18 +87,33 @@ class Program
 
         try
         {
-            // Parse volumes to be snapshotted
-            var tasks = Args.FromPath.Zip(Args.ToPath, (from, to) => new
-            {
-                FromPath = from,
-                ToPath = to,
-                ToGuard = Path.Combine(to, "__HoboMirrorTarget__.txt"),
-                FromVolume = WinAPI.GetVolumeForPath(from),
-            });
-
             // Log header
             LogAll("==============");
             LogAll($"Started at {DateTime.Now}");
+
+            // Parse mirror paths
+            var tasksPaths = Args.FromPath.Zip(Args.ToPath, (from, to) => (from, to));
+            if (Settings?.MirrorTasks != null)
+                tasksPaths = tasksPaths.Concat(Settings.MirrorTasks.Select(t => (Path.GetFullPath(t.From).WithSlash(), Path.GetFullPath(t.To).WithSlash())));
+            tasksPaths = tasksPaths.Select(t => (from: t.Item1, to: t.Item2))
+                .Select(t => (Path.GetFullPath(t.from).WithSlash(), Path.GetFullPath(t.to).WithSlash()))
+                .ToList();
+            // Verify paths
+            foreach (var path in tasksPaths.SelectMany(p => new[] { p.from, p.to }))
+                if (!Directory.Exists(path))
+                {
+                    LogError($"Directory not found: {path}");
+                    return -1;
+                }
+            // Figure out volumes
+            var tasks = tasksPaths
+                .Select(t => new
+                {
+                    FromPath = t.from,
+                    ToPath = t.to,
+                    ToGuard = Path.Combine(t.to, "__HoboMirrorTarget__.txt"),
+                    FromVolume = WinAPI.GetVolumeForPath(t.from),
+                }).ToList();
 
             // Refuse to mirror without a guard file
             foreach (var task in tasks)
@@ -136,7 +151,11 @@ class Program
                 foreach (var task in tasks)
                 {
                     var fromPath = Path.Combine(sourcePaths[task.FromVolume], task.FromPath.Substring(task.FromVolume.Length));
-                    LogAction($"  mirror task: from “{task.FromPath}” to “{task.ToPath}” (volume snapshot path: {fromPath})");
+                    LogAction($"  mirror task:");
+                    LogAction($"    from: {task.FromPath}");
+                    LogAction($"    to: {task.ToPath}");
+                    LogAction($"    source volume: {task.FromVolume}");
+                    LogAction($"    volume snapshot: {fromPath}");
                 }
                 foreach (var ignore in Args.IgnorePath.Concat(Settings?.IgnorePaths ?? []).Order())
                     LogAction($"  ignore path: “{ignore}”");
