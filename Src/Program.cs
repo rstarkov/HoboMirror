@@ -19,7 +19,7 @@ namespace HoboMirror;
 class Program
 {
     static CmdLine Args;
-    static SettingsFileJson<Settings> SettingsFile = null;
+    static SettingsFileXml<Settings> SettingsFile = null;
     static Settings Settings => SettingsFile?.Settings; // can be null if running without settings file command option
     static bool UseVolumeShadowCopy = true;
     static bool RefreshAccessControl = true;
