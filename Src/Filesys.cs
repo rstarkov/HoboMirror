@@ -3,7 +3,6 @@ using System.Runtime.InteropServices;
 using System.Security.AccessControl;
 using System.Text.RegularExpressions;
 using Microsoft.Win32.SafeHandles;
-using Windows.Wdk.Storage.FileSystem;
 using Windows.Win32;
 using Windows.Win32.Foundation;
 using Windows.Win32.Storage.FileSystem;

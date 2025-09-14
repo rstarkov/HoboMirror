@@ -105,10 +105,13 @@ static class WinAPI
         return handle;
     }
 
+    /// <summary>
+    ///     Disables path processing by prefixing with \\?\. This enables long file paths on older systems without the global
+    ///     enable, and also allows weird paths such as "foo." or "foo " to be mirrored as-is.</summary>
     public static string LongPath(string path)
     {
-        if (path.Length >= 260 && !path.StartsWith(@"\"))
-            path = @"\\?\" + Path.GetFullPath(path);
+        if (!path.StartsWith(@"\"))
+            path = @"\\?\" + path;
         return path;
     }
 }
