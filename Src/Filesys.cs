@@ -21,9 +21,9 @@ static class Filesys
     private const FILE_FLAGS_AND_ATTRIBUTES Semantics = FILE_FLAGS_AND_ATTRIBUTES.FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAGS_AND_ATTRIBUTES.FILE_FLAG_OPEN_REPARSE_POINT;
 
     /// <summary>Calls PInvoke.CreateFile. Handles long paths, and ensures the handle is valid or throws.</summary>
-    private static unsafe SafeFileHandle CreateFile(string lpFileName, uint dwDesiredAccess, FILE_SHARE_MODE dwShareMode, SECURITY_ATTRIBUTES? lpSecurityAttributes, FILE_CREATION_DISPOSITION dwCreationDisposition, FILE_FLAGS_AND_ATTRIBUTES dwFlagsAndAttributes, SafeHandle hTemplateFile)
+    private static unsafe SafeFileHandle create(string lpFileName, uint dwDesiredAccess, SECURITY_ATTRIBUTES? lpSecurityAttributes, FILE_CREATION_DISPOSITION dwCreationDisposition, FILE_FLAGS_AND_ATTRIBUTES dwFlagsAndAttributes)
     {
-        var handle = PInvoke.CreateFile(LongPath(lpFileName), dwDesiredAccess, dwShareMode, lpSecurityAttributes, dwCreationDisposition, dwFlagsAndAttributes, hTemplateFile);
+        var handle = PInvoke.CreateFile(LongPath(lpFileName), dwDesiredAccess, FileShareAll, lpSecurityAttributes, dwCreationDisposition, dwFlagsAndAttributes, null);
         if (handle.IsInvalid)
             throw new Win32Exception();
         return handle;
@@ -41,7 +41,7 @@ static class Filesys
 
     public static SafeFileHandle OpenHandle(string path, uint dwDesiredAccess)
     {
-        return CreateFile(path, dwDesiredAccess, FileShareAll, null, FileDispExisting, Semantics, null);
+        return create(path, dwDesiredAccess, null, FileDispExisting, Semantics);
     }
 
     /// <summary>
@@ -49,7 +49,7 @@ static class Filesys
     ///     SeBackup/SeRestore). For reparse points, reads the reparse point itself, not its target.</summary>
     public static FILE_BASIC_INFO GetTimestampsAndAttributes(string path)
     {
-        using var handle = CreateFile(path, (uint)FILE_ACCESS_RIGHTS.FILE_READ_ATTRIBUTES, FileShareAll, null, FileDispExisting, Semantics, null);
+        using var handle = create(path, (uint)FILE_ACCESS_RIGHTS.FILE_READ_ATTRIBUTES, null, FileDispExisting, Semantics);
         return GetTimestampsAndAttributes(handle);
     }
     /// <summary>
@@ -68,7 +68,7 @@ static class Filesys
     ///     SeBackup/SeRestore). For reparse points, updates the reparse point itself, not its target.</summary>
     public static unsafe void SetTimestampsAndAttributes(string path, FILE_BASIC_INFO info)
     {
-        using var handle = CreateFile(path, (uint)FILE_ACCESS_RIGHTS.FILE_WRITE_ATTRIBUTES, FileShareAll, null, FileDispExisting, Semantics, null);
+        using var handle = create(path, (uint)FILE_ACCESS_RIGHTS.FILE_WRITE_ATTRIBUTES, null, FileDispExisting, Semantics);
         SetTimestampsAndAttributes(handle, info);
     }
     /// <summary>
@@ -82,7 +82,7 @@ static class Filesys
 
     public static long GetFileLength(string path)
     {
-        using var handle = CreateFile(path, (uint)FILE_ACCESS_RIGHTS.FILE_READ_ATTRIBUTES, FileShareAll, null, FileDispExisting, Semantics, null);
+        using var handle = create(path, (uint)FILE_ACCESS_RIGHTS.FILE_READ_ATTRIBUTES, null, FileDispExisting, Semantics);
         return GetFileLength(handle);
     }
     public static unsafe long GetFileLength(SafeFileHandle handle)
@@ -99,7 +99,7 @@ static class Filesys
     ///     non-empty directories (throws).</summary>
     public static unsafe void Delete(string path)
     {
-        using var handle = CreateFile(path, (uint)FILE_ACCESS_RIGHTS.DELETE, FileShareAll, null, FileDispExisting, Semantics, null);
+        using var handle = create(path, (uint)FILE_ACCESS_RIGHTS.DELETE, null, FileDispExisting, Semantics);
         FILE_DISPOSITION_INFO_EX info;
         info.Flags = FILE_DISPOSITION_INFO_EX_FLAGS.FILE_DISPOSITION_FLAG_DELETE | FILE_DISPOSITION_INFO_EX_FLAGS.FILE_DISPOSITION_FLAG_IGNORE_READONLY_ATTRIBUTE;
         if (!PInvoke.SetFileInformationByHandle(handle, FILE_INFO_BY_HANDLE_CLASS.FileDispositionInfoEx, &info, (uint)Marshal.SizeOf<FILE_DISPOSITION_INFO_EX>()))
@@ -116,7 +116,7 @@ static class Filesys
     ///     SeBackup/SeRestore). Read-only flag is ignored on overwrite.</param>
     public static unsafe void Rename(string path, string newpath, bool overwrite = false)
     {
-        using var handle = CreateFile(path, (uint)FILE_ACCESS_RIGHTS.DELETE, FileShareAll, null, FileDispExisting, Semantics, null);
+        using var handle = create(path, (uint)FILE_ACCESS_RIGHTS.DELETE, null, FileDispExisting, Semantics);
         newpath = LongPath(newpath);
         int bufbytes = FILE_RENAME_INFO.SizeOf(newpath.Length + 1); // including null terminator (though this SizeOf over-estimates size due to alignment)
         byte* buf = stackalloc byte[bufbytes];
@@ -139,8 +139,8 @@ static class Filesys
     public static unsafe void CopyFile(string source, string destination, Action<CopyFileProgress> progress = null)
     {
         var semantics = FILE_FLAGS_AND_ATTRIBUTES.FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAGS_AND_ATTRIBUTES.FILE_FLAG_SEQUENTIAL_SCAN;
-        using var srcH = CreateFile(source, (uint)GENERIC_ACCESS_RIGHTS.GENERIC_READ, FileShareAll, null, FileDispExisting, semantics, null);
-        using var dstH = CreateFile(destination, (uint)GENERIC_ACCESS_RIGHTS.GENERIC_WRITE, FileShareAll, null, FileDispNew, semantics, null);
+        using var srcH = create(source, (uint)GENERIC_ACCESS_RIGHTS.GENERIC_READ, null, FileDispExisting, semantics);
+        using var dstH = create(destination, (uint)GENERIC_ACCESS_RIGHTS.GENERIC_WRITE, null, FileDispNew, semantics);
         if (!PInvoke.GetFileSizeEx(srcH, out var filesize))
             throw new Win32Exception();
 
@@ -206,8 +206,7 @@ static class Filesys
     /// <summary>Creates a new empty file at the specified path. Throws if the path already exists.</summary>
     public static void CreateFile(string path)
     {
-        using var handle = CreateFile(path, (uint)FILE_ACCESS_RIGHTS.FILE_GENERIC_WRITE, FileShareAll, null,
-            FILE_CREATION_DISPOSITION.CREATE_NEW, Semantics, null);
+        using var handle = create(path, (uint)FILE_ACCESS_RIGHTS.FILE_GENERIC_WRITE, null, FileDispNew, Semantics);
     }
 
     /// <summary>Creates a new empty directory at the specified path. Throws if the path already exists.</summary>
