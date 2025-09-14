@@ -16,14 +16,20 @@ namespace HoboMirror;
 static class Filesys
 {
     private const FILE_SHARE_MODE FileShareAll = FILE_SHARE_MODE.FILE_SHARE_READ | FILE_SHARE_MODE.FILE_SHARE_WRITE | FILE_SHARE_MODE.FILE_SHARE_DELETE;
-    private const FILE_CREATION_DISPOSITION FileDispExisting = FILE_CREATION_DISPOSITION.OPEN_EXISTING;
-    private const FILE_CREATION_DISPOSITION FileDispNew = FILE_CREATION_DISPOSITION.CREATE_NEW;
     private const FILE_FLAGS_AND_ATTRIBUTES Semantics = FILE_FLAGS_AND_ATTRIBUTES.FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAGS_AND_ATTRIBUTES.FILE_FLAG_OPEN_REPARSE_POINT;
 
-    /// <summary>Calls PInvoke.CreateFile. Handles long paths, and ensures the handle is valid or throws.</summary>
-    private static unsafe SafeFileHandle create(string lpFileName, uint dwDesiredAccess, SECURITY_ATTRIBUTES? lpSecurityAttributes, FILE_CREATION_DISPOSITION dwCreationDisposition, FILE_FLAGS_AND_ATTRIBUTES dwFlagsAndAttributes)
+    /// <summary>Calls PInvoke.CreateFile with OpenExisting disp. Handles long paths, and ensures the handle is valid or throws.</summary>
+    private static unsafe SafeFileHandle openExisting(string lpFileName, uint dwDesiredAccess, FILE_FLAGS_AND_ATTRIBUTES dwFlagsAndAttributes)
     {
-        var handle = PInvoke.CreateFile(LongPath(lpFileName), dwDesiredAccess, FileShareAll, lpSecurityAttributes, dwCreationDisposition, dwFlagsAndAttributes, null);
+        var handle = PInvoke.CreateFile(LongPath(lpFileName), dwDesiredAccess, FileShareAll, null, FILE_CREATION_DISPOSITION.OPEN_EXISTING, dwFlagsAndAttributes, null);
+        if (handle.IsInvalid)
+            throw new Win32Exception();
+        return handle;
+    }
+    /// <summary>Calls PInvoke.CreateFile with CreateNew disp. Handles long paths, and ensures the handle is valid or throws.</summary>
+    private static unsafe SafeFileHandle createNew(string lpFileName, uint dwDesiredAccess, FILE_FLAGS_AND_ATTRIBUTES dwFlagsAndAttributes, SECURITY_ATTRIBUTES? lpSecurityAttributes = null)
+    {
+        var handle = PInvoke.CreateFile(LongPath(lpFileName), dwDesiredAccess, FileShareAll, lpSecurityAttributes, FILE_CREATION_DISPOSITION.CREATE_NEW, dwFlagsAndAttributes, null);
         if (handle.IsInvalid)
             throw new Win32Exception();
         return handle;
@@ -41,7 +47,7 @@ static class Filesys
 
     public static SafeFileHandle OpenHandle(string path, uint dwDesiredAccess)
     {
-        return create(path, dwDesiredAccess, null, FileDispExisting, Semantics);
+        return openExisting(path, dwDesiredAccess, Semantics);
     }
 
     /// <summary>
@@ -49,7 +55,7 @@ static class Filesys
     ///     SeBackup/SeRestore). For reparse points, reads the reparse point itself, not its target.</summary>
     public static FILE_BASIC_INFO GetTimestampsAndAttributes(string path)
     {
-        using var handle = create(path, (uint)FILE_ACCESS_RIGHTS.FILE_READ_ATTRIBUTES, null, FileDispExisting, Semantics);
+        using var handle = openExisting(path, (uint)FILE_ACCESS_RIGHTS.FILE_READ_ATTRIBUTES, Semantics);
         return GetTimestampsAndAttributes(handle);
     }
     /// <summary>
@@ -68,7 +74,7 @@ static class Filesys
     ///     SeBackup/SeRestore). For reparse points, updates the reparse point itself, not its target.</summary>
     public static unsafe void SetTimestampsAndAttributes(string path, FILE_BASIC_INFO info)
     {
-        using var handle = create(path, (uint)FILE_ACCESS_RIGHTS.FILE_WRITE_ATTRIBUTES, null, FileDispExisting, Semantics);
+        using var handle = openExisting(path, (uint)FILE_ACCESS_RIGHTS.FILE_WRITE_ATTRIBUTES, Semantics);
         SetTimestampsAndAttributes(handle, info);
     }
     /// <summary>
@@ -82,7 +88,7 @@ static class Filesys
 
     public static long GetFileLength(string path)
     {
-        using var handle = create(path, (uint)FILE_ACCESS_RIGHTS.FILE_READ_ATTRIBUTES, null, FileDispExisting, Semantics);
+        using var handle = openExisting(path, (uint)FILE_ACCESS_RIGHTS.FILE_READ_ATTRIBUTES, Semantics);
         return GetFileLength(handle);
     }
     public static unsafe long GetFileLength(SafeFileHandle handle)
@@ -99,7 +105,7 @@ static class Filesys
     ///     non-empty directories (throws).</summary>
     public static unsafe void Delete(string path)
     {
-        using var handle = create(path, (uint)FILE_ACCESS_RIGHTS.DELETE, null, FileDispExisting, Semantics);
+        using var handle = openExisting(path, (uint)FILE_ACCESS_RIGHTS.DELETE, Semantics);
         FILE_DISPOSITION_INFO_EX info;
         info.Flags = FILE_DISPOSITION_INFO_EX_FLAGS.FILE_DISPOSITION_FLAG_DELETE | FILE_DISPOSITION_INFO_EX_FLAGS.FILE_DISPOSITION_FLAG_IGNORE_READONLY_ATTRIBUTE;
         if (!PInvoke.SetFileInformationByHandle(handle, FILE_INFO_BY_HANDLE_CLASS.FileDispositionInfoEx, &info, (uint)Marshal.SizeOf<FILE_DISPOSITION_INFO_EX>()))
@@ -116,7 +122,7 @@ static class Filesys
     ///     SeBackup/SeRestore). Read-only flag is ignored on overwrite.</param>
     public static unsafe void Rename(string path, string newpath, bool overwrite = false)
     {
-        using var handle = create(path, (uint)FILE_ACCESS_RIGHTS.DELETE, null, FileDispExisting, Semantics);
+        using var handle = openExisting(path, (uint)FILE_ACCESS_RIGHTS.DELETE, Semantics);
         newpath = LongPath(newpath);
         int bufbytes = FILE_RENAME_INFO.SizeOf(newpath.Length + 1); // including null terminator (though this SizeOf over-estimates size due to alignment)
         byte* buf = stackalloc byte[bufbytes];
@@ -135,12 +141,12 @@ static class Filesys
     ///     Copies a file from source to destination. Uses backup semantics to bypass access control checks (requires
     ///     SeBackup/SeRestore).</summary>
     /// <remarks>
-    ///     Copies timestamps and basic attrs. Does not copy sparse or compressed status; alt data streams.</remarks>
+    ///     Copies timestamps and basic attrs. Does not copy sparse or compressed status; alt data streams; owner/sacl/dacl.</remarks>
     public static unsafe void CopyFile(string source, string destination, Action<CopyFileProgress> progress = null)
     {
         var semantics = FILE_FLAGS_AND_ATTRIBUTES.FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAGS_AND_ATTRIBUTES.FILE_FLAG_SEQUENTIAL_SCAN;
-        using var srcH = create(source, (uint)GENERIC_ACCESS_RIGHTS.GENERIC_READ, null, FileDispExisting, semantics);
-        using var dstH = create(destination, (uint)GENERIC_ACCESS_RIGHTS.GENERIC_WRITE, null, FileDispNew, semantics);
+        using var srcH = openExisting(source, (uint)GENERIC_ACCESS_RIGHTS.GENERIC_READ, semantics);
+        using var dstH = createNew(destination, (uint)GENERIC_ACCESS_RIGHTS.GENERIC_WRITE, semantics);
         if (!PInvoke.GetFileSizeEx(srcH, out var filesize))
             throw new Win32Exception();
 
@@ -206,7 +212,7 @@ static class Filesys
     /// <summary>Creates a new empty file at the specified path. Throws if the path already exists.</summary>
     public static void CreateFile(string path)
     {
-        using var handle = create(path, (uint)FILE_ACCESS_RIGHTS.FILE_GENERIC_WRITE, null, FileDispNew, Semantics);
+        using var handle = createNew(path, (uint)FILE_ACCESS_RIGHTS.FILE_GENERIC_WRITE, Semantics);
     }
 
     /// <summary>Creates a new empty directory at the specified path. Throws if the path already exists.</summary>
