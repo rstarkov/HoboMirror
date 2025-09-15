@@ -659,16 +659,24 @@ class Program
         var paths = TryCatchIo(() => Filesys.ListDirectory(path), err => $"Unable to list directory ({err}): {path}");
         if (paths == null)
             return null;
-        return paths.Select(CreateItem).Where(r => r != null).ToArray();
+        return paths.Select(p => CreateItem(path, p)).Where(r => r != null).ToArray();
     }
 
     /// <summary>
     ///     Determines what type of item this filesystem entry is, while handling any potential errors. On failure, logs an
     ///     appropriate message and returns null (which the caller is expected to handle by skipping whatever they were going
-    ///     to do with this item).</summary>
+    ///     to do with this item). Slow variant, must open file handle.</summary>
     private static Item CreateItem(string path)
     {
         return TryCatchIo(() => new Item(path), err => $"Unable to determine filesystem entry type ({err}): {path}");
+    }
+    /// <summary>
+    ///     Determines what type of item this filesystem entry is, while handling any potential errors. On failure, logs an
+    ///     appropriate message and returns null (which the caller is expected to handle by skipping whatever they were going
+    ///     to do with this item). Fast variant, initialised from dir enumeration.</summary>
+    private static Item CreateItem(string parentPath, Filesys.DirEntry e)
+    {
+        return TryCatchIo(() => new Item(parentPath, e), err => $"Unable to determine filesystem entry type ({err}): {Path.Combine(parentPath, e.Name)}");
     }
 
     private static DateTime lastProgress;
@@ -695,17 +703,36 @@ class Item
     public string TypeDesc => Type == ItemType.Dir ? "directory" : Type == ItemType.DirSymlink ? "directory-symlink" : Type == ItemType.File ? "file" : Type == ItemType.FileSymlink ? "file-symlink" : Type == ItemType.Junction ? "junction" : throw new Exception("unreachable 63161");
     public override string ToString() => $"{TypeDesc}: {FullPath}{(Reparse == null ? "" : (" -> " + Reparse.SubstituteName))}";
 
+    /// <summary>Slow init if all we have is a path - must open the handle.</summary>
     public Item(string path)
     {
         FullPath = path;
         Name = Path.GetFileName(path);
         using var handle = Filesys.OpenHandle(FullPath, (uint)FILE_ACCESS_RIGHTS.FILE_READ_ATTRIBUTES);
         Attrs = Filesys.GetTimestampsAndAttributes(handle);
-        bool isDir = (Attrs.FileAttributes & (uint)FILE_FLAGS_AND_ATTRIBUTES.FILE_ATTRIBUTE_DIRECTORY) != 0;
         Reparse = (Attrs.FileAttributes & (uint)FILE_FLAGS_AND_ATTRIBUTES.FILE_ATTRIBUTE_REPARSE_POINT) != 0 ? ReparsePoint.GetReparseData(handle) : null;
-        FileLength = 0;
+        finishInit();
+        if (Type == ItemType.File)
+            FileLength = Filesys.GetFileLength(handle);
+    }
+
+    /// <summary>Fast init if we have most data - only open the handle if it's a reparse point.</summary>
+    public Item(string parentPath, Filesys.DirEntry e)
+    {
+        FullPath = Path.Combine(parentPath, e.Name);
+        Name = e.Name;
+        Attrs = e.Attrs;
+        Reparse = (Attrs.FileAttributes & (uint)FILE_FLAGS_AND_ATTRIBUTES.FILE_ATTRIBUTE_REPARSE_POINT) != 0 ? ReparsePoint.GetReparseData(FullPath) : null;
+        FileLength = e.Length;
+        finishInit();
+    }
+
+    private void finishInit()
+    {
+        bool isDir = (Attrs.FileAttributes & (uint)FILE_FLAGS_AND_ATTRIBUTES.FILE_ATTRIBUTE_DIRECTORY) != 0;
         if (Reparse != null)
         {
+            FileLength = 0;
             if (Reparse.IsJunction)
                 Type = ItemType.Junction;
             else if (Reparse.IsSymlink)
@@ -714,12 +741,12 @@ class Item
                 throw new Exception($"unrecognized reparse point type {Reparse.ReparseTag}");
         }
         else if (isDir)
-            Type = ItemType.Dir;
-        else
         {
-            Type = ItemType.File;
-            FileLength = Filesys.GetFileLength(handle);
+            Type = ItemType.Dir;
+            FileLength = 0;
         }
+        else
+            Type = ItemType.File;
     }
 
     /// <summary>

@@ -24,3 +24,6 @@ GetVolumePathNamesForVolumeName
 ReadFile
 WriteFile
 GetFileSizeEx
+NtQueryDirectoryFile
+RtlNtStatusToDosError
+FILE_DIRECTORY_INFORMATION

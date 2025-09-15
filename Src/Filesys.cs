@@ -1,8 +1,8 @@
 ﻿using System.ComponentModel;
 using System.Runtime.InteropServices;
 using System.Security.AccessControl;
-using System.Text.RegularExpressions;
 using Microsoft.Win32.SafeHandles;
+using Windows.Wdk.Storage.FileSystem;
 using Windows.Win32;
 using Windows.Win32.Foundation;
 using Windows.Win32.Security;
@@ -222,28 +222,53 @@ static class Filesys
     }
 
     /// <summary>Lists paths contained inside the specified directory. Returns full paths.</summary>
-    public static string[] ListDirectory(string path)
+    public static unsafe List<DirEntry> ListDirectory(string path, int buflen = 4096)
     {
-        var rootPath = untrimRootPath(path);
-        // we must fixup the paths returned as they may contain an extra slash if "untrimmed"
-        return new DirectoryInfo(LongPath(rootPath)).EnumerateFileSystemInfos() // verified to use backup semantics, i.e. ignoring ACLs if SeBackupPrivilege is enabled
-            .Select(p => Path.Combine(path, p.Name))
-            .ToArray();
+        using var dsh = openExisting(path, (uint)FILE_ACCESS_RIGHTS.FILE_LIST_DIRECTORY, FILE_FLAGS_AND_ATTRIBUTES.FILE_FLAG_BACKUP_SEMANTICS);
+        var dh = (HANDLE)dsh.DangerousGetHandle();
+        var buffer = new byte[buflen]; // eliminating this alloc improves perf by only 1% in the absolute best case
+        var results = new List<DirEntry>();
+        fixed (byte* bufferPtr = buffer)
+        {
+            while (true)
+            {
+                var nts = Windows.Wdk.PInvoke.NtQueryDirectoryFile(dh, HANDLE.Null, null, null, out var status, bufferPtr, (uint)buffer.Length, FILE_INFORMATION_CLASS.FileDirectoryInformation, false, null, false);
+                if (nts == 0x80000006 /*STATUS_NO_MORE_FILES*/)
+                    break;
+                if (nts != 0)
+                    throw new Win32Exception((int)PInvoke.RtlNtStatusToDosError(nts));
+                var info = (FILE_DIRECTORY_INFORMATION*)bufferPtr;
+                while (true)
+                {
+                    var filenameSpan = info->FileName.AsSpan((int)info->FileNameLength / 2);
+                    var filename = filenameSpan.ToString();
+                    if (filename != "." && filename != "..")
+                        results.Add(new DirEntry
+                        {
+                            Name = filename,
+                            Length = info->EndOfFile,
+                            Attrs = new FILE_BASIC_INFO
+                            {
+                                CreationTime = info->CreationTime,
+                                LastAccessTime = info->LastAccessTime,
+                                LastWriteTime = info->LastWriteTime,
+                                ChangeTime = info->ChangeTime,
+                                FileAttributes = info->FileAttributes,
+                            },
+                        });
+                    if (info->NextEntryOffset == 0)
+                        break;
+                    info = (FILE_DIRECTORY_INFORMATION*)((byte*)info + info->NextEntryOffset);
+                }
+            }
+        }
+        return results;
     }
 
-    /// <summary>
-    ///     Workaround for https://github.com/dotnet/runtime/issues/119009</summary>
-    /// <remarks>
-    ///     Adds one or two backslashes if the path is a shadow copy root path. Doesn't change any other paths.</remarks>
-    private static string untrimRootPath(string path)
+    public struct DirEntry
     {
-        const string vssPrefix = @"\\?\GLOBALROOT\Device\HarddiskVolumeShadowCopy";
-        if (path.StartsWith(vssPrefix, StringComparison.OrdinalIgnoreCase))
-        {
-            var match = Regex.Match(path[vssPrefix.Length..], @"^[^\\]*(\\)?$");
-            if (match.Success)
-                return path + (match.Groups[1].Success ? @"\" : @"\\");
-        }
-        return path;
+        public string Name;
+        public long Length; // or 0
+        public FILE_BASIC_INFO Attrs;
     }
 }
