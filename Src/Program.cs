@@ -23,7 +23,7 @@ class Program
     static Settings Settings => SettingsFile?.Settings; // can be null if running without settings file command option
     static bool UseVolumeShadowCopy = true;
     static bool RefreshAccessControl = true;
-    static bool UpdateMetadata = true;
+    static bool RefreshAttributes = true;
     static int Errors = 0;
     static int CriticalErrors = 0;
 
@@ -67,8 +67,7 @@ class Program
         {
             SettingsFile = new(throwOnError: true, Args.SettingsPath);
             RefreshAccessControl = Settings.SkipRefreshAccessControlDays == null || (Settings.LastRefreshAccessControl + TimeSpan.FromDays((double)Settings.SkipRefreshAccessControlDays) < DateTime.UtcNow);
-            Console.WriteLine($"Refresh access control: {RefreshAccessControl}");
-            Console.WriteLine($"Update metadata: {UpdateMetadata}");
+            RefreshAttributes = Settings.SkipRefreshAttributesDays == null || (Settings.LastRefreshAttributes + TimeSpan.FromDays((double)Settings.SkipRefreshAttributesDays) < DateTime.UtcNow);
         }
 
         // Initialise log files
@@ -161,6 +160,8 @@ class Program
                     LogAction($"  ignore path: “{ignore}”");
                 foreach (var ignore in Settings?.IgnoreDirNames ?? [])
                     LogAction($"  ignore directory name: “{ignore}”");
+                LogAction($"  refresh access control: {RefreshAccessControl}");
+                LogAction($"  refresh attributes: {RefreshAttributes}");
 
                 foreach (var task in tasks)
                 {
@@ -185,6 +186,8 @@ class Program
             {
                 if (RefreshAccessControl)
                     Settings.LastRefreshAccessControl = DateTime.UtcNow;
+                if (RefreshAttributes)
+                    Settings.LastRefreshAttributes = DateTime.UtcNow;
                 SettingsFile.Save();
             }
 
@@ -341,7 +344,7 @@ class Program
 
     private static void CopyAttributes(Item src, Item tgt)
     {
-        if (!UpdateMetadata)
+        if (!RefreshAttributes)
             return;
         TryCatchIo(() =>
         {
@@ -471,21 +474,24 @@ class Program
             tgtItems = tgtDict.Values.OrderBy(s => s.Type == ItemType.Dir ? 2 : 1).ThenBy(s => s.Name.ToLowerInvariant()).ToArray();
 
             // Phase 4: sync access control and filesystem attributes
-            foreach (var srcItem in srcItems)
+            if (RefreshAccessControl || RefreshAccessControl)
             {
-                var tgtItem = tgtDict.Get(srcItem.Name, null);
-                if (tgtItem == null)
-                    continue;
-                Console.Title = GetOriginalSrcPath(srcItem.FullPath) + " (attributes)";
-
-                if (srcItem.Type != ItemType.Dir) // directories are handled by Copy* calls just before and just after these 4 phases
+                foreach (var srcItem in srcItems)
                 {
-                    CopyAccessControl(srcItem, tgtItem);
-                    CopyAttributes(srcItem, tgtItem);
+                    var tgtItem = tgtDict.Get(srcItem.Name, null);
+                    if (tgtItem == null)
+                        continue;
+                    Console.Title = GetOriginalSrcPath(srcItem.FullPath) + " (attributes)";
+
+                    if (srcItem.Type != ItemType.Dir) // directories are handled by Copy* calls just before and just after these 4 phases
+                    {
+                        CopyAccessControl(srcItem, tgtItem);
+                        CopyAttributes(srcItem, tgtItem);
+                    }
                 }
+                if (!toplevel)
+                    CopyAttributes(src, tgt);
             }
-            if (!toplevel)
-                CopyAttributes(src, tgt);
         }
         catch (Exception e)
         {
