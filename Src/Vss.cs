@@ -77,9 +77,8 @@ class VolumeShadowCopy : IDisposable
         {
             foreach (var volume in volumes)
             {
-                Program.LogAction($"Creating VSS snapshot for {volume}...");
+                Program.LogAction($"Create VSS snapshot for {volume}");
                 Snapshots[volume] = Vss.CreateSnapshot(volume);
-                Program.LogAction($"  done: volume {volume} [aka {Snapshots[volume].VolumeDisplayPath}, unique {Snapshots[volume].VolumeGuidPath}] snapshot UNC: {Snapshots[volume].SnapshotPath}");
             }
         }
         catch
@@ -95,9 +94,8 @@ class VolumeShadowCopy : IDisposable
             return;
         foreach (var snap in Snapshots.Values)
         {
-            Program.LogAction($"Deleting VSS snapshot: {snap.Id} for {snap.VolumeDisplayPath}");
+            Program.LogAction($"Delete VSS snapshot: {snap.Id} for {snap.VolumeDisplayPath}");
             snap.Delete();
-            Program.LogAction("   done.");
         }
         Snapshots = null;
     }

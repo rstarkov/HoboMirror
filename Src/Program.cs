@@ -389,12 +389,12 @@ class Program
             {
                 if (Args.IgnorePath.Concat(Settings?.IgnorePaths ?? []).Any(ignore => PathsEqual(GetOriginalSrcPath(srcItem.FullPath), ignore)))
                 {
-                    LogAction($"ignoring path: {GetOriginalSrcPath(srcItem.FullPath)}");
+                    LogAction($"Skip by path: {GetOriginalSrcPath(srcItem.FullPath)}");
                     srcDict.Remove(srcItem.Name);
                 }
                 else if (srcItem.Type == ItemType.Dir && (Settings?.IgnoreDirNames ?? []).Any(ignore => ignore.EqualsIgnoreCase(srcItem.Name)))
                 {
-                    LogAction($"ignoring directory name: {GetOriginalSrcPath(srcItem.FullPath)}");
+                    LogAction($"Skip directory by name: {GetOriginalSrcPath(srcItem.FullPath)}");
                     srcDict.Remove(srcItem.Name);
                 }
             }
@@ -560,14 +560,14 @@ class Program
                     throw new Exception("could not enumerate directory contents");
                 foreach (var item in items.OrderBy(t => t.Type == ItemType.Dir ? 2 : 1).ThenBy(t => t.Name))
                     ActDelete(item);
-                TryCatchIoAction("delete empty directory", tgt.FullPath, () =>
+                TryCatchIoAction("Delete empty directory", tgt.FullPath, () =>
                 {
                     Filesys.Delete(tgt.FullPath);
                 });
             }
             else
             {
-                TryCatchIoAction($"delete {tgt.TypeDesc}", tgt.FullPath, () =>
+                TryCatchIoAction($"Delete {tgt.TypeDesc}", tgt.FullPath, () =>
                 {
                     Filesys.Delete(tgt.FullPath);
                 });
@@ -578,7 +578,7 @@ class Program
     /// <summary>Creates the specified directory. Assumes that it doesn't exist.</summary>
     private static void ActCreateDirectory(string fullName)
     {
-        TryCatchIoAction("create directory", fullName, () =>
+        TryCatchIoAction("Create directory", fullName, () =>
         {
             Filesys.CreateDirectory(fullName);
         });
@@ -587,7 +587,7 @@ class Program
     /// <summary>Creates the specified file symlink. Assumes that it doesn't exist.</summary>
     private static void ActCreateFileSymlink(string fullName, ReparsePointData rpd)
     {
-        TryCatchIoAction("create file-symlink", fullName, () =>
+        TryCatchIoAction("Create file-symlink", fullName, () =>
         {
             Filesys.CreateFile(fullName);
             ReparsePoint.SetSymlinkData(fullName, rpd.SubstituteName, rpd.PrintName, rpd.IsSymlinkRelative);
@@ -597,7 +597,7 @@ class Program
     /// <summary>Creates the specified directory symlink. Assumes that it doesn't exist.</summary>
     private static void ActCreateDirSymlink(string fullName, ReparsePointData rpd)
     {
-        TryCatchIoAction("create directory-symlink", fullName, () =>
+        TryCatchIoAction("Create directory-symlink", fullName, () =>
         {
             Filesys.CreateDirectory(fullName);
             ReparsePoint.SetSymlinkData(fullName, rpd.SubstituteName, rpd.PrintName, rpd.IsSymlinkRelative);
@@ -607,7 +607,7 @@ class Program
     /// <summary>Creates the specified junction. Assumes that it doesn't exist.</summary>
     private static void ActCreateJunction(string fullName, ReparsePointData rpd)
     {
-        TryCatchIoAction("create junction", fullName, () =>
+        TryCatchIoAction("Create junction", fullName, () =>
         {
             Filesys.CreateDirectory(fullName);
             ReparsePoint.SetJunctionData(fullName, rpd.SubstituteName, rpd.PrintName);
@@ -635,7 +635,7 @@ class Program
     {
         var tgtTemp = Path.Combine(Path.GetDirectoryName(tgtFullName), $"~HoboMirror-{Rnd.GenerateString(16)}.tmp");
 
-        bool success = TryCatchIoAction("copy file", GetOriginalSrcPath(srcFullName), () =>
+        bool success = TryCatchIoAction("Copy file", GetOriginalSrcPath(srcFullName), () =>
         {
             Filesys.CopyFile(srcFullName, tgtTemp, CopyProgress);
             return true;
