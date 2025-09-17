@@ -7,6 +7,7 @@ using RT.Serialization.Settings;
 using RT.Util;
 using RT.Util.Consoles;
 using RT.Util.ExtensionMethods;
+using Windows.Win32.Foundation;
 using Windows.Win32.Storage.FileSystem;
 
 // Notes:
@@ -83,6 +84,9 @@ class Program
             CriticalErrorLog = openLog($"HoboMirror-ErrorsCritical.{DateTime.Today:yyyy-MM-dd}.txt");
             StreamWriter openLog(string filename) => new StreamWriter(File.Open(Path.Combine(Args.LogPath, filename), FileMode.Append, FileAccess.Write, FileShare.Read), enc);
         }
+        // Initialise console title updater
+        if (Windows.Win32.PInvoke.GetConsoleWindow() != HWND.Null)
+            new Thread(StatusUpdaterThread) { IsBackground = true }.Start();
 
         try
         {
@@ -261,6 +265,18 @@ class Program
         CriticalErrorLog?.Flush();
     }
 
+    public static volatile string StatusText = null;
+
+    private static void StatusUpdaterThread()
+    {
+        while (true)
+        {
+            if (StatusText != null)
+                Console.Title = StatusText + " : " + DateTime.UtcNow.Millisecond;
+            Thread.Sleep(50);
+        }
+    }
+
     private static HashSet<string> ChangedDirs = new HashSet<string>();
 
     private static Func<string, string> GetOriginalSrcPath;
@@ -405,7 +421,7 @@ class Program
             srcItems = srcDict.Values.OrderBy(s => s.Type == ItemType.Dir ? 2 : 1).ThenBy(s => s.Name.ToLowerInvariant()).ToArray();
             tgtItems = tgtDict.Values.OrderBy(s => s.Type == ItemType.Dir ? 2 : 1).ThenBy(s => s.Name.ToLowerInvariant()).ToArray();
 
-            Console.Title = GetOriginalSrcPath(src.FullPath) + " (directory ACL)";
+            StatusText = GetOriginalSrcPath(src.FullPath) + " (directory ACL)";
             CopyAccessControl(src, tgt); // this potentially modifies sub-items, so we must do it before syncing the sub-items
 
             // Phase 1: delete all target items which are missing in source, or are of a different item type
@@ -414,7 +430,7 @@ class Program
                 var srcItem = srcDict.Get(tgtItem.Name, null);
                 if (srcItem != null && srcItem.Type == tgtItem.Type)
                     continue;
-                Console.Title = GetOriginalSrcPath(Path.Combine(src.FullPath, tgtItem.Name)) + " (delete)";
+                StatusText = GetOriginalSrcPath(Path.Combine(src.FullPath, tgtItem.Name)) + " (delete)";
                 if (srcItem == null)
                     LogChange($"Found deleted {tgtItem.TypeDesc}: ", GetOriginalSrcPath(Path.Combine(src.FullPath, tgtItem.Name)));
                 else
@@ -430,7 +446,7 @@ class Program
                 var tgtItem = tgtDict.Get(srcItem.Name, null);
                 if (tgtItem == null)
                     continue;
-                Console.Title = GetOriginalSrcPath(srcItem.FullPath) + " (sync)";
+                StatusText = GetOriginalSrcPath(srcItem.FullPath) + " (sync)";
 
                 if (srcItem.Type == ItemType.Dir && tgtItem.Type == ItemType.Dir)
                     SyncDir(srcItem, tgtItem);
@@ -451,7 +467,7 @@ class Program
             {
                 if (tgtDict.ContainsKey(srcItem.Name))
                     continue;
-                Console.Title = GetOriginalSrcPath(srcItem.FullPath) + " (copy)";
+                StatusText = GetOriginalSrcPath(srcItem.FullPath) + " (copy)";
 
                 LogChange($"Found new {srcItem.TypeDesc}: ", GetOriginalSrcPath(srcItem.FullPath));
                 var tgtFullName = Path.Combine(tgt.FullPath, srcItem.Name);
@@ -481,7 +497,7 @@ class Program
                     var tgtItem = tgtDict.Get(srcItem.Name, null);
                     if (tgtItem == null)
                         continue;
-                    Console.Title = GetOriginalSrcPath(srcItem.FullPath) + " (attributes)";
+                    StatusText = GetOriginalSrcPath(srcItem.FullPath) + " (attributes)";
 
                     if (srcItem.Type != ItemType.Dir) // directories are handled by Copy* calls just before and just after these 4 phases
                     {
@@ -691,7 +707,7 @@ class Program
         if (lastProgress < DateTime.UtcNow - TimeSpan.FromMilliseconds(100))
         {
             lastProgress = DateTime.UtcNow;
-            Console.Title = $"Copying {msg.CopiedBytes / (double)msg.TotalBytes * 100.0:0.0}% : {msg.CopiedBytes / 1000000.0:#,0} MB of {msg.TotalBytes / 1000000.0:#,0} MB";
+            StatusText = $"Copying {msg.CopiedBytes / (double)msg.TotalBytes * 100.0:0.0}% : {msg.CopiedBytes / 1000000.0:#,0} MB of {msg.TotalBytes / 1000000.0:#,0} MB";
         }
     }
 }

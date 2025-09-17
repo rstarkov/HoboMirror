@@ -27,3 +27,4 @@ GetFileSizeEx
 NtQueryDirectoryFile
 RtlNtStatusToDosError
 FILE_DIRECTORY_INFORMATION
+GetConsoleWindow
