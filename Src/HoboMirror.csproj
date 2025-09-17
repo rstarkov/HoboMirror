@@ -5,6 +5,9 @@
     <TargetFramework>net9.0-windows8.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>disable</Nullable>
+    <PublishSingleFile>true</PublishSingleFile>
+    <SelfContained>false</SelfContained>
+    <DebugType>embedded</DebugType>
   </PropertyGroup>
 
   <ItemGroup>
@@ -18,5 +21,9 @@
     <PackageReference Include="RT.Util.Core" Version="2.0.1811" />
     <PackageReference Include="System.Management" Version="9.0.8" />
   </ItemGroup>
+
+  <Target Name="PostBuildCheck" AfterTargets="AfterBuild;Publish">
+    <Exec WorkingDirectory="$(OutputPath)" Command="&quot;$(TargetDir)$(AssemblyName).exe&quot; --post-build-check &quot;$(SolutionDir).&quot;" />
+  </Target>
 
 </Project>
