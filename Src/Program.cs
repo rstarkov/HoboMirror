@@ -678,7 +678,11 @@ class Program
     ///     logging errors as appropriate.</summary>
     private static Item[] GetDirectoryItems(string path)
     {
+        var start = DateTime.UtcNow;
         var paths = TryCatchIo(() => Filesys.ListDirectory(path), err => $"Unable to list directory ({err}): {path}");
+        var time = (DateTime.UtcNow - start).TotalSeconds;
+        if (time > 0.2)
+            LogAction($"Enumerate directory: {time:0.00} seconds for {paths?.Count ?? -999:#,0} entries: {path}");
         if (paths == null)
             return null;
         return paths.Select(p => CreateItem(path, p)).Where(r => r != null).ToArray();
