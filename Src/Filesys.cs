@@ -51,13 +51,13 @@ static class Filesys
     }
 
     /// <summary>Creates a new empty file at the specified path. Throws if the path already exists.</summary>
-    public static void CreateFile(string path)
+    public static void CreateEmptyFile(string path)
     {
         using var handle = createNew(path, (uint)FILE_ACCESS_RIGHTS.FILE_GENERIC_WRITE, Semantics);
     }
 
     /// <summary>Creates a new empty directory at the specified path. Throws if the path already exists.</summary>
-    public static void CreateDirectory(string path)
+    public static void CreateEmptyDirectory(string path)
     {
         Directory.CreateDirectory(LongPath(path)); // verified to use backup semantics, i.e. ignoring ACLs if SeRestorePrivilege is enabled
     }

@@ -602,7 +602,7 @@ class Program
     {
         TryCatchIoAction("Create directory", fullName, () =>
         {
-            Filesys.CreateDirectory(fullName);
+            Filesys.CreateEmptyDirectory(fullName);
         });
     }
 
@@ -611,7 +611,7 @@ class Program
     {
         TryCatchIoAction("Create file-symlink", fullName, () =>
         {
-            Filesys.CreateFile(fullName);
+            Filesys.CreateEmptyFile(fullName);
             ReparsePoint.SetSymlinkData(fullName, rpd.SubstituteName, rpd.PrintName, rpd.IsSymlinkRelative);
         });
     }
@@ -621,7 +621,7 @@ class Program
     {
         TryCatchIoAction("Create directory-symlink", fullName, () =>
         {
-            Filesys.CreateDirectory(fullName);
+            Filesys.CreateEmptyDirectory(fullName);
             ReparsePoint.SetSymlinkData(fullName, rpd.SubstituteName, rpd.PrintName, rpd.IsSymlinkRelative);
         });
     }
@@ -631,7 +631,7 @@ class Program
     {
         TryCatchIoAction("Create junction", fullName, () =>
         {
-            Filesys.CreateDirectory(fullName);
+            Filesys.CreateEmptyDirectory(fullName);
             ReparsePoint.SetJunctionData(fullName, rpd.SubstituteName, rpd.PrintName);
         });
     }
