@@ -50,52 +50,67 @@ static class Filesys
         return openExisting(path, dwDesiredAccess, Semantics);
     }
 
-    /// <summary>
-    ///     Gets timestamps and attributes for path. Uses backup semantics to bypass access control checks (requires
-    ///     SeBackup/SeRestore). For reparse points, reads the reparse point itself, not its target.</summary>
-    public static FILE_BASIC_INFO GetTimestampsAndAttributes(string path)
+    /// <summary>Creates a new empty file at the specified path. Throws if the path already exists.</summary>
+    public static void CreateFile(string path)
     {
-        using var handle = openExisting(path, (uint)FILE_ACCESS_RIGHTS.FILE_READ_ATTRIBUTES, Semantics);
-        return GetTimestampsAndAttributes(handle);
-    }
-    /// <summary>
-    ///     Gets timestamps and attributes for path. Uses backup semantics to bypass access control checks (requires
-    ///     SeBackup/SeRestore). For reparse points, reads the reparse point itself, not its target.</summary>
-    public static unsafe FILE_BASIC_INFO GetTimestampsAndAttributes(SafeFileHandle handle)
-    {
-        FILE_BASIC_INFO info;
-        if (!PInvoke.GetFileInformationByHandleEx(handle, FILE_INFO_BY_HANDLE_CLASS.FileBasicInfo, &info, (uint)Marshal.SizeOf<FILE_BASIC_INFO>()))
-            throw new Win32Exception();
-        return info;
+        using var handle = createNew(path, (uint)FILE_ACCESS_RIGHTS.FILE_GENERIC_WRITE, Semantics);
     }
 
-    /// <summary>
-    ///     Sets timestamps and attributes for path. Uses backup semantics to bypass access control checks (requires
-    ///     SeBackup/SeRestore). For reparse points, updates the reparse point itself, not its target.</summary>
-    public static unsafe void SetTimestampsAndAttributes(string path, FILE_BASIC_INFO info)
+    /// <summary>Creates a new empty directory at the specified path. Throws if the path already exists.</summary>
+    public static void CreateDirectory(string path)
     {
-        using var handle = openExisting(path, (uint)FILE_ACCESS_RIGHTS.FILE_WRITE_ATTRIBUTES, Semantics);
-        SetTimestampsAndAttributes(handle, info);
-    }
-    /// <summary>
-    ///     Sets timestamps and attributes for path. Uses backup semantics to bypass access control checks (requires
-    ///     SeBackup/SeRestore). For reparse points, updates the reparse point itself, not its target.</summary>
-    public static unsafe void SetTimestampsAndAttributes(SafeFileHandle handle, FILE_BASIC_INFO info)
-    {
-        if (!PInvoke.SetFileInformationByHandle(handle, FILE_INFO_BY_HANDLE_CLASS.FileBasicInfo, &info, (uint)Marshal.SizeOf<FILE_BASIC_INFO>()))
-            throw new Win32Exception();
+        Directory.CreateDirectory(LongPath(path)); // verified to use backup semantics, i.e. ignoring ACLs if SeRestorePrivilege is enabled
     }
 
-    public static long GetFileLength(string path)
+    /// <summary>Lists paths contained inside the specified directory. Returns full paths.</summary>
+    public static unsafe List<DirEntry> ListDirectory(string path, int buflen = 4096)
     {
-        using var handle = openExisting(path, (uint)FILE_ACCESS_RIGHTS.FILE_READ_ATTRIBUTES, Semantics);
-        return GetFileLength(handle);
+        using var dsh = openExisting(path, (uint)FILE_ACCESS_RIGHTS.FILE_LIST_DIRECTORY, FILE_FLAGS_AND_ATTRIBUTES.FILE_FLAG_BACKUP_SEMANTICS);
+        var dh = (HANDLE)dsh.DangerousGetHandle();
+        var buffer = new byte[buflen]; // eliminating this alloc improves perf by only 1% in the absolute best case
+        var results = new List<DirEntry>();
+        fixed (byte* bufferPtr = buffer)
+        {
+            while (true)
+            {
+                var nts = Windows.Wdk.PInvoke.NtQueryDirectoryFile(dh, HANDLE.Null, null, null, out var status, bufferPtr, (uint)buffer.Length, FILE_INFORMATION_CLASS.FileDirectoryInformation, false, null, false);
+                if (nts == 0x80000006 /*STATUS_NO_MORE_FILES*/)
+                    break;
+                if (nts != 0)
+                    throw new Win32Exception((int)PInvoke.RtlNtStatusToDosError(nts));
+                var info = (FILE_DIRECTORY_INFORMATION*)bufferPtr;
+                while (true)
+                {
+                    var filenameSpan = info->FileName.AsSpan((int)info->FileNameLength / 2);
+                    var filename = filenameSpan.ToString();
+                    if (filename != "." && filename != "..")
+                        results.Add(new DirEntry
+                        {
+                            Name = filename,
+                            Length = info->EndOfFile,
+                            Attrs = new FILE_BASIC_INFO
+                            {
+                                CreationTime = info->CreationTime,
+                                LastAccessTime = info->LastAccessTime,
+                                LastWriteTime = info->LastWriteTime,
+                                ChangeTime = info->ChangeTime,
+                                FileAttributes = info->FileAttributes,
+                            },
+                        });
+                    if (info->NextEntryOffset == 0)
+                        break;
+                    info = (FILE_DIRECTORY_INFORMATION*)((byte*)info + info->NextEntryOffset);
+                }
+            }
+        }
+        return results;
     }
-    public static unsafe long GetFileLength(SafeFileHandle handle)
+
+    public struct DirEntry
     {
-        if (!PInvoke.GetFileSizeEx(handle, out var lpFileSize))
-            throw new Win32Exception();
-        return lpFileSize;
+        public string Name;
+        public long Length; // or 0
+        public FILE_BASIC_INFO Attrs;
     }
 
     /// <summary>
@@ -182,6 +197,54 @@ static class Filesys
         public long CopiedBytes;
     }
 
+    public static long GetFileLength(string path)
+    {
+        using var handle = openExisting(path, (uint)FILE_ACCESS_RIGHTS.FILE_READ_ATTRIBUTES, Semantics);
+        return GetFileLength(handle);
+    }
+    public static unsafe long GetFileLength(SafeFileHandle handle)
+    {
+        if (!PInvoke.GetFileSizeEx(handle, out var lpFileSize))
+            throw new Win32Exception();
+        return lpFileSize;
+    }
+
+    /// <summary>
+    ///     Gets timestamps and attributes for path. Uses backup semantics to bypass access control checks (requires
+    ///     SeBackup/SeRestore). For reparse points, reads the reparse point itself, not its target.</summary>
+    public static FILE_BASIC_INFO GetTimestampsAndAttributes(string path)
+    {
+        using var handle = openExisting(path, (uint)FILE_ACCESS_RIGHTS.FILE_READ_ATTRIBUTES, Semantics);
+        return GetTimestampsAndAttributes(handle);
+    }
+    /// <summary>
+    ///     Gets timestamps and attributes for path. Uses backup semantics to bypass access control checks (requires
+    ///     SeBackup/SeRestore). For reparse points, reads the reparse point itself, not its target.</summary>
+    public static unsafe FILE_BASIC_INFO GetTimestampsAndAttributes(SafeFileHandle handle)
+    {
+        FILE_BASIC_INFO info;
+        if (!PInvoke.GetFileInformationByHandleEx(handle, FILE_INFO_BY_HANDLE_CLASS.FileBasicInfo, &info, (uint)Marshal.SizeOf<FILE_BASIC_INFO>()))
+            throw new Win32Exception();
+        return info;
+    }
+
+    /// <summary>
+    ///     Sets timestamps and attributes for path. Uses backup semantics to bypass access control checks (requires
+    ///     SeBackup/SeRestore). For reparse points, updates the reparse point itself, not its target.</summary>
+    public static unsafe void SetTimestampsAndAttributes(string path, FILE_BASIC_INFO info)
+    {
+        using var handle = openExisting(path, (uint)FILE_ACCESS_RIGHTS.FILE_WRITE_ATTRIBUTES, Semantics);
+        SetTimestampsAndAttributes(handle, info);
+    }
+    /// <summary>
+    ///     Sets timestamps and attributes for path. Uses backup semantics to bypass access control checks (requires
+    ///     SeBackup/SeRestore). For reparse points, updates the reparse point itself, not its target.</summary>
+    public static unsafe void SetTimestampsAndAttributes(SafeFileHandle handle, FILE_BASIC_INFO info)
+    {
+        if (!PInvoke.SetFileInformationByHandle(handle, FILE_INFO_BY_HANDLE_CLASS.FileBasicInfo, &info, (uint)Marshal.SizeOf<FILE_BASIC_INFO>()))
+            throw new Win32Exception();
+    }
+
     /// <summary>Gets file security info (owner, ACLs, inheritability) in binary form. Uses backup semantics.</summary>
     public static byte[] GetSecurityInfoFile(string path)
     {
@@ -207,68 +270,5 @@ static class Filesys
         var sec = new DirectorySecurity(); // per docs, must construct a new object otherwise nothing gets applied
         sec.SetSecurityDescriptorBinaryForm(fileSecurity);
         new DirectoryInfo(LongPath(path)).SetAccessControl(sec);
-    }
-
-    /// <summary>Creates a new empty file at the specified path. Throws if the path already exists.</summary>
-    public static void CreateFile(string path)
-    {
-        using var handle = createNew(path, (uint)FILE_ACCESS_RIGHTS.FILE_GENERIC_WRITE, Semantics);
-    }
-
-    /// <summary>Creates a new empty directory at the specified path. Throws if the path already exists.</summary>
-    public static void CreateDirectory(string path)
-    {
-        Directory.CreateDirectory(LongPath(path)); // verified to use backup semantics, i.e. ignoring ACLs if SeRestorePrivilege is enabled
-    }
-
-    /// <summary>Lists paths contained inside the specified directory. Returns full paths.</summary>
-    public static unsafe List<DirEntry> ListDirectory(string path, int buflen = 4096)
-    {
-        using var dsh = openExisting(path, (uint)FILE_ACCESS_RIGHTS.FILE_LIST_DIRECTORY, FILE_FLAGS_AND_ATTRIBUTES.FILE_FLAG_BACKUP_SEMANTICS);
-        var dh = (HANDLE)dsh.DangerousGetHandle();
-        var buffer = new byte[buflen]; // eliminating this alloc improves perf by only 1% in the absolute best case
-        var results = new List<DirEntry>();
-        fixed (byte* bufferPtr = buffer)
-        {
-            while (true)
-            {
-                var nts = Windows.Wdk.PInvoke.NtQueryDirectoryFile(dh, HANDLE.Null, null, null, out var status, bufferPtr, (uint)buffer.Length, FILE_INFORMATION_CLASS.FileDirectoryInformation, false, null, false);
-                if (nts == 0x80000006 /*STATUS_NO_MORE_FILES*/)
-                    break;
-                if (nts != 0)
-                    throw new Win32Exception((int)PInvoke.RtlNtStatusToDosError(nts));
-                var info = (FILE_DIRECTORY_INFORMATION*)bufferPtr;
-                while (true)
-                {
-                    var filenameSpan = info->FileName.AsSpan((int)info->FileNameLength / 2);
-                    var filename = filenameSpan.ToString();
-                    if (filename != "." && filename != "..")
-                        results.Add(new DirEntry
-                        {
-                            Name = filename,
-                            Length = info->EndOfFile,
-                            Attrs = new FILE_BASIC_INFO
-                            {
-                                CreationTime = info->CreationTime,
-                                LastAccessTime = info->LastAccessTime,
-                                LastWriteTime = info->LastWriteTime,
-                                ChangeTime = info->ChangeTime,
-                                FileAttributes = info->FileAttributes,
-                            },
-                        });
-                    if (info->NextEntryOffset == 0)
-                        break;
-                    info = (FILE_DIRECTORY_INFORMATION*)((byte*)info + info->NextEntryOffset);
-                }
-            }
-        }
-        return results;
-    }
-
-    public struct DirEntry
-    {
-        public string Name;
-        public long Length; // or 0
-        public FILE_BASIC_INFO Attrs;
     }
 }
