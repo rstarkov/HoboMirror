@@ -1,11 +1,11 @@
 ﻿using System.ComponentModel;
 using System.Runtime.InteropServices;
-using System.Security.AccessControl;
 using Microsoft.Win32.SafeHandles;
 using Windows.Wdk.Storage.FileSystem;
 using Windows.Win32;
 using Windows.Win32.Foundation;
 using Windows.Win32.Security;
+using Windows.Win32.Security.Authorization;
 using Windows.Win32.Storage.FileSystem;
 
 namespace HoboMirror;
@@ -18,7 +18,8 @@ static class Filesys
     private const FILE_SHARE_MODE FileShareAll = FILE_SHARE_MODE.FILE_SHARE_READ | FILE_SHARE_MODE.FILE_SHARE_WRITE | FILE_SHARE_MODE.FILE_SHARE_DELETE;
     private const FILE_FLAGS_AND_ATTRIBUTES Semantics = FILE_FLAGS_AND_ATTRIBUTES.FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAGS_AND_ATTRIBUTES.FILE_FLAG_OPEN_REPARSE_POINT;
 
-    /// <summary>Calls PInvoke.CreateFile with OpenExisting disp. Handles long paths, and ensures the handle is valid or throws.</summary>
+    /// <summary>
+    ///     Calls PInvoke.CreateFile with OpenExisting disp. Handles long paths, and ensures the handle is valid or throws.</summary>
     private static unsafe SafeFileHandle openExisting(string lpFileName, uint dwDesiredAccess, FILE_FLAGS_AND_ATTRIBUTES dwFlagsAndAttributes)
     {
         var handle = PInvoke.CreateFile(LongPath(lpFileName), dwDesiredAccess, FileShareAll, null, FILE_CREATION_DISPOSITION.OPEN_EXISTING, dwFlagsAndAttributes, null);
@@ -245,30 +246,41 @@ static class Filesys
             throw new Win32Exception();
     }
 
-    /// <summary>Gets file security info (owner, ACLs, inheritability) in binary form. Uses backup semantics.</summary>
-    public static byte[] GetSecurityInfoFile(string path)
-    {
-        return new FileInfo(LongPath(path)).GetAccessControl(AccessControlSections.All).GetSecurityDescriptorBinaryForm();
-    }
-    /// <summary>Gets directory security info (owner, ACLs, inheritability) in binary form. Uses backup semantics.</summary>
-    public static byte[] GetSecurityInfoDir(string path)
-    {
-        return new DirectoryInfo(LongPath(path)).GetAccessControl(AccessControlSections.All).GetSecurityDescriptorBinaryForm();
-    }
-    /// <summary>Sets file security info (owner, ACLs, inheritability). Uses backup semantics.</summary>
-    public static void SetSecurityInfoFile(string path, byte[] fileSecurity)
-    {
-        var sec = new FileSecurity(); // per docs, must construct a new object otherwise nothing gets applied
-        sec.SetSecurityDescriptorBinaryForm(fileSecurity);
-        new FileInfo(LongPath(path)).SetAccessControl(sec);
-    }
     /// <summary>
-    ///     Sets directory security info (owner, ACLs, inheritability). Uses backup semantics. Appears to apply inheriable
-    ///     ACLs recursively (todo).</summary>
-    public static void SetSecurityInfoDir(string path, byte[] fileSecurity)
+    ///     Copies owner, group, DACL and the "don't inherit DACL" flag. Does not propagate inheritable ACEs, which is fast
+    ///     but requires child ACEs to be copied too, or be left inconsistent. Does not copy SACL/inherit flag, integrity
+    ///     label. We copy inherited ACEs as-is, with the "inherited" flag, as that is the expected result of a correct
+    ///     inheritance propagation. This method will not propagate inheritable ACEs from parent directories, which includes
+    ///     ACEs inherited from the mirror root and above - which technically leaves an inconsistent state, but it's a more
+    ///     accurate representation of the mirror source.</summary>
+    public static unsafe void CopySecurityInfo(string source, string destination)
     {
-        var sec = new DirectorySecurity(); // per docs, must construct a new object otherwise nothing gets applied
-        sec.SetSecurityDescriptorBinaryForm(fileSecurity);
-        new DirectoryInfo(LongPath(path)).SetAccessControl(sec);
+        using var srcH = openExisting(source, (uint)FILE_ACCESS_RIGHTS.READ_CONTROL, Semantics);
+        using var dstH = openExisting(destination, 0x02000000/*MAXIMUM_ALLOWED means don't propagate*/ | (uint)FILE_ACCESS_RIGHTS.WRITE_DAC | (uint)FILE_ACCESS_RIGHTS.WRITE_OWNER | (uint)FILE_ACCESS_RIGHTS.STANDARD_RIGHTS_WRITE, Semantics);
+
+        var secinfo =
+            OBJECT_SECURITY_INFORMATION.OWNER_SECURITY_INFORMATION |
+            OBJECT_SECURITY_INFORMATION.GROUP_SECURITY_INFORMATION | // not used except in posix semantics, possibly not at all - but get it for completeness
+            OBJECT_SECURITY_INFORMATION.DACL_SECURITY_INFORMATION;
+        PSID owner, group;
+        PSECURITY_DESCRIPTOR pSecDesc;
+        ACL* pdacl;
+        var res = PInvoke.GetSecurityInfo(srcH, SE_OBJECT_TYPE.SE_FILE_OBJECT, secinfo, &owner, &group, &pdacl, null, &pSecDesc);
+        if (res != 0)
+            throw new Win32Exception((int)res);
+
+        var sec = (SECURITY_DESCRIPTOR*)pSecDesc;
+        var ctrl = sec->Control;
+        if ((ctrl & SECURITY_DESCRIPTOR_CONTROL.SE_DACL_PROTECTED) != 0)
+            secinfo |= OBJECT_SECURITY_INFORMATION.PROTECTED_DACL_SECURITY_INFORMATION;
+        else
+            secinfo |= OBJECT_SECURITY_INFORMATION.UNPROTECTED_DACL_SECURITY_INFORMATION;
+
+        res = PInvoke.SetSecurityInfo((HANDLE)dstH.DangerousGetHandle(), SE_OBJECT_TYPE.SE_FILE_OBJECT, secinfo, owner, group, pdacl, null);
+        if (res != 0)
+            throw new Win32Exception((int)res);
+
+        if ((nint)PInvoke.LocalFree((HLOCAL)(nint)pSecDesc) != 0)
+            throw new Win32Exception();
     }
 }

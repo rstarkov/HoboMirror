@@ -27,3 +27,7 @@ NtQueryDirectoryFile
 RtlNtStatusToDosError
 FILE_DIRECTORY_INFORMATION
 GetConsoleWindow
+GetSecurityInfo
+SetSecurityInfo
+SECURITY_DESCRIPTOR
+LocalFree

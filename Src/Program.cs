@@ -334,28 +334,10 @@ class Program
     {
         if (!RefreshAccessControl)
             return;
-
-        var acl = TryCatchIo(() =>
-        {
-            if (src.Type == ItemType.File || src.Type == ItemType.FileSymlink)
-                return Filesys.GetSecurityInfoFile(src.FullPath);
-            else if (src.Type == ItemType.Dir || src.Type == ItemType.DirSymlink || src.Type == ItemType.Junction)
-                return Filesys.GetSecurityInfoDir(src.FullPath);
-            else
-                throw new Exception("unreachable 24961");
-        }, err => $"Unable to get {src.TypeDesc} access control ({err}): {GetOriginalSrcPath(src.FullPath)}");
-        if (acl == null)
-            return;
-
         TryCatchIo(() =>
         {
-            if (tgt.Type == ItemType.File || tgt.Type == ItemType.FileSymlink)
-                Filesys.SetSecurityInfoFile(tgt.FullPath, acl);
-            else if (tgt.Type == ItemType.Dir || tgt.Type == ItemType.DirSymlink || tgt.Type == ItemType.Junction)
-                Filesys.SetSecurityInfoDir(tgt.FullPath, acl);
-            else
-                throw new Exception("unreachable 16943");
-        }, err => $"Unable to set {tgt.TypeDesc} access control ({err}): {tgt.FullPath}");
+            Filesys.CopySecurityInfo(src.FullPath, tgt.FullPath);
+        }, err => $"Unable to copy {tgt.TypeDesc} access control ({err}): {tgt.FullPath}");
     }
 
     private static void CopyAttributes(Item src, Item tgt)
@@ -490,7 +472,7 @@ class Program
             tgtItems = tgtDict.Values.OrderBy(s => s.Type == ItemType.Dir ? 2 : 1).ThenBy(s => s.Name.ToLowerInvariant()).ToArray();
 
             // Phase 4: sync access control and filesystem attributes
-            if (RefreshAccessControl || RefreshAccessControl)
+            if (RefreshAccessControl || RefreshAttributes)
             {
                 foreach (var srcItem in srcItems)
                 {
@@ -659,7 +641,7 @@ class Program
 
         bool success = TryCatchIoAction("Copy file", GetOriginalSrcPath(srcFullName), () =>
         {
-            Filesys.CopyFile(srcFullName, tgtTemp, CopyProgress);
+            Filesys.CopyFile(srcFullName, tgtTemp, CopyProgress); // also copies attributes
             return true;
         });
         if (!success)
@@ -669,6 +651,12 @@ class Program
         {
             Filesys.Rename(tgtTemp, tgtFullName, overwrite: true);
         }, err => $"Unable to rename temp copied file to final destination ({err}): {tgtFullName}");
+
+        // Copy access control (attributes already copied)
+        TryCatchIo(() =>
+        {
+            Filesys.CopySecurityInfo(tgtFullName, srcFullName);
+        }, err => $"Unable to copy file access control ({err}): {GetOriginalSrcPath(srcFullName)}");
     }
 
     /// <summary>
