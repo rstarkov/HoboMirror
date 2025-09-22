@@ -22,6 +22,8 @@ class Program
     static CmdLine Args;
     static SettingsFileXml<Settings> SettingsFile = null;
     static Settings Settings => SettingsFile?.Settings; // can be null if running without settings file command option
+    static List<string> IgnorePaths;
+    static HashSet<string> IgnoreDirNames;
     static bool UseVolumeShadowCopy = true;
     static bool RefreshMetadata = true;
     static int Errors = 0;
@@ -115,6 +117,9 @@ class Program
                     ToGuard = Path.Combine(t.to, "__HoboMirrorTarget__.txt"),
                     FromVolume = WinAPI.GetVolumeForPath(t.from),
                 }).ToList();
+            // Merge ignore paths
+            IgnorePaths = Args.IgnorePath.Concat(Settings?.IgnorePaths ?? []).ToList();
+            IgnoreDirNames = Args.IgnoreName.Concat(Settings?.IgnoreDirNames ?? []).ToHashSet(StringComparer.OrdinalIgnoreCase);
 
             // Refuse to mirror without a guard file
             foreach (var task in tasks)
@@ -158,9 +163,9 @@ class Program
                     LogAction($"    source volume: {task.FromVolume}");
                     LogAction($"    volume snapshot: {fromPath}");
                 }
-                foreach (var ignore in Args.IgnorePath.Concat(Settings?.IgnorePaths ?? []).Order())
+                foreach (var ignore in IgnorePaths.Order())
                     LogAction($"  ignore path: “{ignore}”");
-                foreach (var ignore in Settings?.IgnoreDirNames ?? [])
+                foreach (var ignore in IgnoreDirNames.Order())
                     LogAction($"  ignore directory name: “{ignore}”");
                 LogAction($"  refresh metadata: {RefreshMetadata}");
 
@@ -376,12 +381,12 @@ class Program
             // Ignore paths as requested: pretend they don't exist in source, which gets them deleted in target if present
             foreach (var srcItem in srcDict.Values.ToList())
             {
-                if (Args.IgnorePath.Concat(Settings?.IgnorePaths ?? []).Any(ignore => PathsEqual(GetOriginalSrcPath(srcItem.FullPath), ignore)))
+                if (IgnorePaths.Any(ignore => PathsEqual(GetOriginalSrcPath(srcItem.FullPath), ignore)))
                 {
                     LogAction($"Skip by path: {GetOriginalSrcPath(srcItem.FullPath)}");
                     srcDict.Remove(srcItem.Name);
                 }
-                else if (srcItem.Type == ItemType.Dir && (Settings?.IgnoreDirNames ?? []).Any(ignore => ignore.EqualsIgnoreCase(srcItem.Name)))
+                else if (srcItem.Type == ItemType.Dir && IgnoreDirNames.Contains(srcItem.Name))
                 {
                     LogAction($"Skip directory by name: {GetOriginalSrcPath(srcItem.FullPath)}");
                     srcDict.Remove(srcItem.Name);

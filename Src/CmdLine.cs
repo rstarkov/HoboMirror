@@ -36,6 +36,13 @@ class CmdLine : ICommandLineValidatable
         """)]
     public string[] IgnorePath = [];
 
+    [Option("-in", "--ignore-name")]
+    [DocumentationRhoML("""
+        {h}Specifies one or more source directory names to ignore.{}
+        The specified directory names will not be mirrored anywhere in the hierarchy, and will be deleted from the target if already present.
+        """)]
+    public string[] IgnoreName = [];
+
     [Option("-s", "--settings")]
     [DocumentationRhoML("""
         {h}Specifies a file containing additional settings.{}
