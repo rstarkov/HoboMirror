@@ -24,6 +24,7 @@ class Program
     static Settings Settings => SettingsFile?.Settings; // can be null if running without settings file command option
     static List<string> IgnorePaths;
     static HashSet<string> IgnoreDirNames;
+    static HashSet<string> VolumeRoots;
     static bool UseVolumeShadowCopy = true;
     static bool RefreshMetadata = true;
     static int Errors = 0;
@@ -150,8 +151,11 @@ class Program
 
             // Perform the mirroring
             var volumes = tasks.GroupBy(t => t.FromVolume).Select(g => g.Key).ToArray();
+            VolumeRoots = volumes.Select(v => v.WithSlash()).ToHashSet(StringComparer.OrdinalIgnoreCase);
             using (var vsc = UseVolumeShadowCopy ? new VolumeShadowCopy(volumes) : null)
             {
+                if (UseVolumeShadowCopy)
+                    VolumeRoots.AddRange(vsc.Snapshots.Values.Select(s => s.SnapshotPath.WithSlash()));
                 var sourcePaths = UseVolumeShadowCopy ? vsc.Snapshots.ToDictionary(kvp => kvp.Key, kvp => kvp.Value.SnapshotPath) : volumes.ToDictionary(vol => vol, vol => vol);
                 LogAction($"Configuration:");
                 foreach (var task in tasks)
@@ -330,14 +334,16 @@ class Program
         return default;
     }
 
-    private static void CopyMetadata(Item src, Item tgt, bool toplevel = false)
+    private static void CopyMetadata(Item src, Item tgt)
     {
         if (!RefreshMetadata)
             return;
         TryCatchIo(() =>
         {
-            if (!toplevel)
-                Filesys.SetTimestampsAndAttributes(tgt.FullPath, src.Attrs);
+            var attrs = src.Attrs;
+            if (VolumeRoots.Contains(src.FullPath.WithSlash())) // volume roots are marked hidden and system; don't copy that
+                attrs.FileAttributes &= ~(uint)(FILE_FLAGS_AND_ATTRIBUTES.FILE_ATTRIBUTE_HIDDEN | FILE_FLAGS_AND_ATTRIBUTES.FILE_ATTRIBUTE_SYSTEM);
+            Filesys.SetTimestampsAndAttributes(tgt.FullPath, attrs);
             Filesys.CopySecurityInfo(src.FullPath, tgt.FullPath);
         }, err => $"Unable to copy {tgt.TypeDesc} metadata ({err}): {tgt.FullPath}");
     }
@@ -474,7 +480,7 @@ class Program
                     if (srcItem.Type != ItemType.Dir) // subdirectories are handled by the recursive SyncDir
                         CopyMetadata(srcItem, tgtItem);
                 }
-                CopyMetadata(src, tgt, toplevel);
+                CopyMetadata(src, tgt);
             }
         }
         catch (Exception e)
