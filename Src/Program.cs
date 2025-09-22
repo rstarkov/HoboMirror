@@ -325,24 +325,16 @@ class Program
         return default;
     }
 
-    private static void CopyAccessControl(Item src, Item tgt)
+    private static void CopyMetadata(Item src, Item tgt, bool toplevel = false)
     {
         if (!RefreshMetadata)
             return;
         TryCatchIo(() =>
         {
+            if (!toplevel)
+                Filesys.SetTimestampsAndAttributes(tgt.FullPath, src.Attrs);
             Filesys.CopySecurityInfo(src.FullPath, tgt.FullPath);
-        }, err => $"Unable to copy {tgt.TypeDesc} access control ({err}): {tgt.FullPath}");
-    }
-
-    private static void CopyAttributes(Item src, Item tgt)
-    {
-        if (!RefreshMetadata)
-            return;
-        TryCatchIo(() =>
-        {
-            Filesys.SetTimestampsAndAttributes(tgt.FullPath, src.Attrs);
-        }, err => $"Unable to set {tgt.TypeDesc} times/attributes ({err}): {tgt.FullPath}");
+        }, err => $"Unable to copy {tgt.TypeDesc} metadata ({err}): {tgt.FullPath}");
     }
 
     /// <summary>
@@ -475,14 +467,9 @@ class Program
                     StatusText = GetOriginalSrcPath(srcItem.FullPath) + " (metadata)";
 
                     if (srcItem.Type != ItemType.Dir) // subdirectories are handled by the recursive SyncDir
-                    {
-                        CopyAccessControl(srcItem, tgtItem);
-                        CopyAttributes(srcItem, tgtItem);
-                    }
+                        CopyMetadata(srcItem, tgtItem);
                 }
-                CopyAccessControl(src, tgt);
-                if (!toplevel)
-                    CopyAttributes(src, tgt);
+                CopyMetadata(src, tgt, toplevel);
             }
         }
         catch (Exception e)
