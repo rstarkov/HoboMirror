@@ -50,6 +50,12 @@ static class WinAPI
 
     public static WIN32_ERROR GetLastError() => (WIN32_ERROR)Marshal.GetLastWin32Error();
 
+    public static void LocalFree(nint ptr)
+    {
+        if (PInvoke.LocalFree((HLOCAL)ptr) != HLOCAL.Null)
+            throw new Win32Exception();
+    }
+
     /// <summary>
     ///     Returns all volume mount paths for the given volume GUID path. Note that there may be none, in which case the
     ///     volume is only accessible via its volume GUID path. Throws for mount paths (must be a GUID path).</summary>

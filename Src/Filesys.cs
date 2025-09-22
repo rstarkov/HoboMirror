@@ -155,14 +155,20 @@ static class Filesys
 
     /// <summary>
     ///     Copies a file from source to destination. Uses backup semantics to bypass access control checks (requires
-    ///     SeBackup/SeRestore).</summary>
-    /// <remarks>
-    ///     Copies timestamps and basic attrs. Does not copy sparse or compressed status; alt data streams; owner/sacl/dacl.</remarks>
+    ///     SeBackup/SeRestore). Copies timestamps, basic attributes, owner/group and DACL (incl disable inheritance flag).
+    ///     Does not copy sparse or compressed status; alt data streams; SACL/integrity label.</summary>
     public static unsafe void CopyFile(string source, string destination, Action<CopyFileProgress> progress = null)
     {
         var semantics = FILE_FLAGS_AND_ATTRIBUTES.FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAGS_AND_ATTRIBUTES.FILE_FLAG_SEQUENTIAL_SCAN;
         using var srcH = openExisting(source, (uint)GENERIC_ACCESS_RIGHTS.GENERIC_READ, semantics);
-        using var dstH = createNew(destination, (uint)GENERIC_ACCESS_RIGHTS.GENERIC_WRITE, semantics);
+        PSECURITY_DESCRIPTOR pSecDesc;
+        var res = PInvoke.GetSecurityInfo(srcH, SE_OBJECT_TYPE.SE_FILE_OBJECT, SecInfoTemplate, null, null, null, null, &pSecDesc);
+        if (res != 0) throw new Win32Exception((int)res);
+        SECURITY_ATTRIBUTES sa = new();
+        sa.nLength = (uint)sizeof(SECURITY_ATTRIBUTES);
+        sa.lpSecurityDescriptor = pSecDesc;
+        using var dstH = createNew(destination, (uint)GENERIC_ACCESS_RIGHTS.GENERIC_WRITE, semantics, sa);
+        WinAPI.LocalFree((nint)pSecDesc);
         if (!PInvoke.GetFileSizeEx(srcH, out var filesize))
             throw new Win32Exception();
 
@@ -246,6 +252,11 @@ static class Filesys
             throw new Win32Exception();
     }
 
+    private const OBJECT_SECURITY_INFORMATION SecInfoTemplate = // we don't ask for SACL or integrity label as we probably don't want to mirror those (plus it needs SeSecurityPrivilege)
+        OBJECT_SECURITY_INFORMATION.OWNER_SECURITY_INFORMATION |
+        OBJECT_SECURITY_INFORMATION.GROUP_SECURITY_INFORMATION | // not used except in posix semantics, possibly not at all - but get it for completeness
+        OBJECT_SECURITY_INFORMATION.DACL_SECURITY_INFORMATION;
+
     /// <summary>
     ///     Copies owner, group, DACL and the "don't inherit DACL" flag. Does not propagate inheritable ACEs, which is fast
     ///     but requires child ACEs to be copied too, or be left inconsistent. Does not copy SACL/inherit flag, integrity
@@ -258,18 +269,15 @@ static class Filesys
         using var srcH = openExisting(source, (uint)FILE_ACCESS_RIGHTS.READ_CONTROL, Semantics);
         using var dstH = openExisting(destination, 0x02000000/*MAXIMUM_ALLOWED means don't propagate*/ | (uint)FILE_ACCESS_RIGHTS.WRITE_DAC | (uint)FILE_ACCESS_RIGHTS.WRITE_OWNER | (uint)FILE_ACCESS_RIGHTS.STANDARD_RIGHTS_WRITE, Semantics);
 
-        var secinfo =
-            OBJECT_SECURITY_INFORMATION.OWNER_SECURITY_INFORMATION |
-            OBJECT_SECURITY_INFORMATION.GROUP_SECURITY_INFORMATION | // not used except in posix semantics, possibly not at all - but get it for completeness
-            OBJECT_SECURITY_INFORMATION.DACL_SECURITY_INFORMATION;
         PSID owner, group;
-        PSECURITY_DESCRIPTOR pSecDesc;
         ACL* pdacl;
-        var res = PInvoke.GetSecurityInfo(srcH, SE_OBJECT_TYPE.SE_FILE_OBJECT, secinfo, &owner, &group, &pdacl, null, &pSecDesc);
+        PSECURITY_DESCRIPTOR pSecDesc;
+        var res = PInvoke.GetSecurityInfo(srcH, SE_OBJECT_TYPE.SE_FILE_OBJECT, SecInfoTemplate, &owner, &group, &pdacl, null, &pSecDesc);
         if (res != 0)
             throw new Win32Exception((int)res);
 
         var sec = (SECURITY_DESCRIPTOR*)pSecDesc;
+        var secinfo = SecInfoTemplate;
         var ctrl = sec->Control;
         if ((ctrl & SECURITY_DESCRIPTOR_CONTROL.SE_DACL_PROTECTED) != 0)
             secinfo |= OBJECT_SECURITY_INFORMATION.PROTECTED_DACL_SECURITY_INFORMATION;
@@ -280,7 +288,6 @@ static class Filesys
         if (res != 0)
             throw new Win32Exception((int)res);
 
-        if ((nint)PInvoke.LocalFree((HLOCAL)(nint)pSecDesc) != 0)
-            throw new Win32Exception();
+        WinAPI.LocalFree((nint)pSecDesc);
     }
 }

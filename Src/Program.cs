@@ -633,7 +633,7 @@ class Program
 
         bool success = TryCatchIoAction("Copy file", GetOriginalSrcPath(srcFullName), () =>
         {
-            Filesys.CopyFile(srcFullName, tgtTemp, CopyProgress); // also copies attributes
+            Filesys.CopyFile(srcFullName, tgtTemp, CopyProgress); // also copies timestamps, attributes, and security
             return true;
         });
         if (!success)
@@ -643,12 +643,6 @@ class Program
         {
             Filesys.Rename(tgtTemp, tgtFullName, overwrite: true);
         }, err => $"Unable to rename temp copied file to final destination ({err}): {tgtFullName}");
-
-        // Copy access control (attributes already copied)
-        TryCatchIo(() =>
-        {
-            Filesys.CopySecurityInfo(srcFullName, tgtFullName);
-        }, err => $"Unable to copy file access control ({err}): {GetOriginalSrcPath(srcFullName)}");
     }
 
     /// <summary>
