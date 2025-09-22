@@ -641,7 +641,7 @@ class Program
         // Copy access control (attributes already copied)
         TryCatchIo(() =>
         {
-            Filesys.CopySecurityInfo(tgtFullName, srcFullName);
+            Filesys.CopySecurityInfo(srcFullName, tgtFullName);
         }, err => $"Unable to copy file access control ({err}): {GetOriginalSrcPath(srcFullName)}");
     }
 
