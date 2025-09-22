@@ -367,6 +367,7 @@ class Program
     {
         try
         {
+            StatusText = GetOriginalSrcPath(src.FullPath) + " (enumerate)";
             var srcItems = GetDirectoryItems(src.FullPath);
             var tgtItems = GetDirectoryItems(tgt.FullPath);
             if (srcItems == null || tgtItems == null)
@@ -397,9 +398,6 @@ class Program
             // Update the item arrays to remove filtered items, and sort them into final processing order
             srcItems = srcDict.Values.OrderBy(s => s.Type == ItemType.Dir ? 2 : 1).ThenBy(s => s.Name.ToLowerInvariant()).ToArray();
             tgtItems = tgtDict.Values.OrderBy(s => s.Type == ItemType.Dir ? 2 : 1).ThenBy(s => s.Name.ToLowerInvariant()).ToArray();
-
-            StatusText = GetOriginalSrcPath(src.FullPath) + " (directory ACL)";
-            CopyAccessControl(src, tgt); // this potentially modifies sub-items, so we must do it before syncing the sub-items
 
             // Phase 1: delete all target items which are missing in source, or are of a different item type
             foreach (var tgtItem in tgtItems)
@@ -466,7 +464,7 @@ class Program
             }
             tgtItems = tgtDict.Values.OrderBy(s => s.Type == ItemType.Dir ? 2 : 1).ThenBy(s => s.Name.ToLowerInvariant()).ToArray();
 
-            // Phase 4: sync access control and filesystem attributes
+            // Phase 4: sync metadata
             if (RefreshMetadata)
             {
                 foreach (var srcItem in srcItems)
@@ -474,14 +472,15 @@ class Program
                     var tgtItem = tgtDict.Get(srcItem.Name, null);
                     if (tgtItem == null)
                         continue;
-                    StatusText = GetOriginalSrcPath(srcItem.FullPath) + " (attributes)";
+                    StatusText = GetOriginalSrcPath(srcItem.FullPath) + " (metadata)";
 
-                    if (srcItem.Type != ItemType.Dir) // directories are handled by Copy* calls just before and just after these 4 phases
+                    if (srcItem.Type != ItemType.Dir) // subdirectories are handled by the recursive SyncDir
                     {
                         CopyAccessControl(srcItem, tgtItem);
                         CopyAttributes(srcItem, tgtItem);
                     }
                 }
+                CopyAccessControl(src, tgt);
                 if (!toplevel)
                     CopyAttributes(src, tgt);
             }
