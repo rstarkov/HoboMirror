@@ -1,5 +1,6 @@
 ﻿using System.ComponentModel;
 using System.Runtime.InteropServices;
+using System.Runtime.InteropServices.ComTypes;
 using Microsoft.Win32.SafeHandles;
 using Windows.Wdk.Storage.FileSystem;
 using Windows.Win32;
@@ -160,7 +161,9 @@ static class Filesys
     public static unsafe void CopyFile(string source, string destination, Action<CopyFileProgress> progress = null)
     {
         var semantics = FILE_FLAGS_AND_ATTRIBUTES.FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAGS_AND_ATTRIBUTES.FILE_FLAG_SEQUENTIAL_SCAN;
-        using var srcH = openExisting(source, (uint)GENERIC_ACCESS_RIGHTS.GENERIC_READ, semantics);
+        using var srcH = openExisting(source, (uint)GENERIC_ACCESS_RIGHTS.GENERIC_READ | (uint)FILE_ACCESS_RIGHTS.FILE_WRITE_ATTRIBUTES/*to disable LastAccess updates*/, semantics);
+        if (!PInvoke.SetFileTime(srcH, null, new FILETIME { dwLowDateTime = -1, dwHighDateTime = -1 }, null)) // disable Last Access Time updates for the source file
+            throw new Win32Exception();
         PSECURITY_DESCRIPTOR pSecDesc;
         var res = PInvoke.GetSecurityInfo(srcH, SE_OBJECT_TYPE.SE_FILE_OBJECT, SecInfoTemplate, null, null, null, null, &pSecDesc);
         if (res != 0) throw new Win32Exception((int)res);
