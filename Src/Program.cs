@@ -26,7 +26,7 @@ class Program
     static HashSet<string> IgnoreDirNames;
     static HashSet<string> VolumeRoots;
     static bool UseVolumeShadowCopy = true;
-    static bool RefreshMetadata = true;
+    static bool ForceRefreshMetadata = true;
     static int Errors = 0;
     static int CriticalErrors = 0;
 
@@ -69,7 +69,7 @@ class Program
         if (Args.SettingsPath != null)
         {
             SettingsFile = new(throwOnError: true, Args.SettingsPath);
-            RefreshMetadata = Settings.SkipRefreshMetadataDays == null || (Settings.LastRefreshMetadata + TimeSpan.FromDays((double)Settings.SkipRefreshMetadataDays) < DateTime.UtcNow);
+            ForceRefreshMetadata = Settings.SkipRefreshMetadataDays == null || (Settings.LastRefreshMetadata + TimeSpan.FromDays((double)Settings.SkipRefreshMetadataDays) < DateTime.UtcNow);
         }
 
         // Initialise log files
@@ -171,7 +171,7 @@ class Program
                     LogAction($"  ignore path: “{ignore}”");
                 foreach (var ignore in IgnoreDirNames.Order())
                     LogAction($"  ignore directory name: “{ignore}”");
-                LogAction($"  refresh metadata: {RefreshMetadata}");
+                LogAction($"  refresh metadata: {ForceRefreshMetadata}");
 
                 foreach (var task in tasks)
                 {
@@ -194,7 +194,7 @@ class Program
             // Update settings file
             if (Settings != null)
             {
-                if (RefreshMetadata)
+                if (ForceRefreshMetadata)
                     Settings.LastRefreshMetadata = DateTime.UtcNow;
                 SettingsFile.Save();
             }
@@ -334,20 +334,6 @@ class Program
         return default;
     }
 
-    private static void CopyMetadata(Item src, Item tgt)
-    {
-        if (!RefreshMetadata)
-            return;
-        TryCatchIo(() =>
-        {
-            var attrs = src.Attrs;
-            if (VolumeRoots.Contains(src.FullPath.WithSlash())) // volume roots are marked hidden and system; don't copy that
-                attrs.FileAttributes &= ~(uint)(FILE_FLAGS_AND_ATTRIBUTES.FILE_ATTRIBUTE_HIDDEN | FILE_FLAGS_AND_ATTRIBUTES.FILE_ATTRIBUTE_SYSTEM);
-            Filesys.SetTimestampsAndAttributes(tgt.FullPath, attrs);
-            Filesys.CopySecurityInfo(src.FullPath, tgt.FullPath);
-        }, err => $"Unable to copy {tgt.TypeDesc} metadata ({err}): {tgt.FullPath}");
-    }
-
     /// <summary>
     ///     Compares paths for equality, ignoring differences in case, slash type, and trailing slash presence. Does not
     ///     ignore differences due to relative path (non-)expansion, different Windows prefixes (/??/, //?/ etc), different
@@ -419,6 +405,7 @@ class Program
             tgtItems = tgtDict.Values.OrderBy(s => s.Type == ItemType.Dir ? 2 : 1).ThenBy(s => s.Name.ToLowerInvariant()).ToArray();
 
             // Phase 2: sync all items that are present in both (and have matching types - which at this point is all items still present in both)
+            // Every sync method is expected to sync metadata - unconditionally if Force'd or if it had to re-create the item, otherwise if metadata changed (we don't diff ACLs)
             foreach (var srcItem in srcItems)
             {
                 var tgtItem = tgtDict.Get(srcItem.Name, null);
@@ -441,6 +428,7 @@ class Program
             }
 
             // Phase 3: copy all items only present in source
+            // Every action method is expected to copy metadata, regardless of ForceRefreshMetadata
             foreach (var srcItem in srcItems)
             {
                 if (tgtDict.ContainsKey(srcItem.Name))
@@ -454,34 +442,21 @@ class Program
                 else if (srcItem.Type == ItemType.File)
                     ActCopyOrReplaceFile(srcItem.FullPath, tgtFullName);
                 else if (srcItem.Type == ItemType.FileSymlink)
-                    ActCreateFileSymlink(tgtFullName, srcItem.Reparse);
+                    ActCopyFileSymlink(srcItem, tgtFullName);
                 else if (srcItem.Type == ItemType.DirSymlink)
-                    ActCreateDirSymlink(tgtFullName, srcItem.Reparse);
+                    ActCopyDirSymlink(srcItem, tgtFullName);
                 else if (srcItem.Type == ItemType.Junction)
-                    ActCreateJunction(tgtFullName, srcItem.Reparse);
+                    ActCopyJunction(srcItem, tgtFullName);
                 else
                     throw new Exception("unreachable 49612");
-                var tgtItem = CreateItem(tgtFullName);
-                if (tgtItem != null)
-                    tgtDict.Add(tgtItem.Name, tgtItem);
             }
-            tgtItems = tgtDict.Values.OrderBy(s => s.Type == ItemType.Dir ? 2 : 1).ThenBy(s => s.Name.ToLowerInvariant()).ToArray();
 
-            // Phase 4: sync metadata
-            if (RefreshMetadata)
-            {
-                foreach (var srcItem in srcItems)
-                {
-                    var tgtItem = tgtDict.Get(srcItem.Name, null);
-                    if (tgtItem == null)
-                        continue;
-                    StatusText = GetOriginalSrcPath(srcItem.FullPath) + " (metadata)";
-
-                    if (srcItem.Type != ItemType.Dir) // subdirectories are handled by the recursive SyncDir
-                        CopyMetadata(srcItem, tgtItem);
-                }
-                CopyMetadata(src, tgt);
-            }
+            // Phase 4: metadata on the directory itself
+            TryCatchIo(tgt.Refresh, err => $"Unable to refresh directory attributes ({err}): {tgt.FullPath}"); // todo: we could track changes explicitly instead of re-reading last modified time
+            if (src.Attrs.LastWriteTime != tgt.Attrs.LastWriteTime)
+                CopyMetadata(src, tgt.FullPath); // directory has definitely changed (includes ActCopyDirectory path), so just copy unconditionally
+            else
+                SyncMetadata(src, tgt); // doesn't look like any changes were made; update metadata only if Force'd or other attrs have changed
         }
         catch (Exception e)
         {
@@ -497,9 +472,12 @@ class Program
     private static void SyncFile(Item src, Item tgt)
     {
         if (src.Attrs.LastWriteTime == tgt.Attrs.LastWriteTime && src.FileLength == tgt.FileLength)
+        {
+            SyncMetadata(src, tgt);
             return;
+        }
         LogChange($"Found modified file: ", GetOriginalSrcPath(src.FullPath), whatChanged: $"\r\n    length: {tgt.FileLength:#,0} -> {src.FileLength:#,0}\r\n    modified: {DateTime.FromFileTimeUtc(tgt.Attrs.LastWriteTime)} -> {DateTime.FromFileTimeUtc(src.Attrs.LastWriteTime)} (UTC)");
-        ActCopyOrReplaceFile(src.FullPath, tgt.FullPathWithName(src.Name));
+        ActCopyOrReplaceFile(src.FullPath, tgt.FullPathWithName(src.Name)); // also copies metadata
     }
 
     /// <summary>
@@ -510,10 +488,13 @@ class Program
         var srcR = src.Reparse;
         var tgtR = tgt.Reparse;
         if (srcR.SubstituteName == tgtR.SubstituteName && srcR.PrintName == tgtR.PrintName && srcR.IsSymlinkRelative == tgtR.IsSymlinkRelative)
+        {
+            SyncMetadata(src, tgt);
             return;
+        }
         LogChange($"Found modified {src.TypeDesc}: ", GetOriginalSrcPath(src.FullPath), whatChanged: $"\r\n    target: {tgtR.SubstituteName} -> {srcR.SubstituteName}\r\n    print name: {tgtR.PrintName} -> {srcR.PrintName}\r\n    relative: {tgtR.IsSymlinkRelative} -> {srcR.IsSymlinkRelative}");
         ActDelete(tgt);
-        ActCreateFileSymlink(tgt.FullPathWithName(src.Name), srcR);
+        ActCopyFileSymlink(src, tgt.FullPathWithName(src.Name)); // also copies metadata
     }
 
     /// <summary>
@@ -524,10 +505,13 @@ class Program
         var srcR = src.Reparse;
         var tgtR = tgt.Reparse;
         if (srcR.SubstituteName == tgtR.SubstituteName && srcR.PrintName == tgtR.PrintName && srcR.IsSymlinkRelative == tgtR.IsSymlinkRelative)
+        {
+            SyncMetadata(src, tgt);
             return;
+        }
         LogChange($"Found modified {src.TypeDesc}: ", GetOriginalSrcPath(src.FullPath), whatChanged: $"\r\n    target: {tgtR.SubstituteName} -> {srcR.SubstituteName}\r\n    print name: {tgtR.PrintName} -> {srcR.PrintName}\r\n    relative: {tgtR.IsSymlinkRelative} -> {srcR.IsSymlinkRelative}");
         ActDelete(tgt);
-        ActCreateDirSymlink(tgt.FullPathWithName(src.Name), srcR);
+        ActCopyDirSymlink(src, tgt.FullPathWithName(src.Name)); // also copies metadata
     }
 
     /// <summary>
@@ -538,10 +522,35 @@ class Program
         var srcR = src.Reparse;
         var tgtR = tgt.Reparse;
         if (srcR.SubstituteName == tgtR.SubstituteName && srcR.PrintName == tgtR.PrintName)
+        {
+            SyncMetadata(src, tgt);
             return;
+        }
         LogChange($"Found modified {src.TypeDesc}: ", GetOriginalSrcPath(src.FullPath), whatChanged: $"\r\n    target: {tgtR.SubstituteName} -> {srcR.SubstituteName}\r\n    print name: {tgtR.PrintName} -> {srcR.PrintName}");
         ActDelete(tgt);
-        ActCreateJunction(tgt.FullPathWithName(src.Name), srcR);
+        ActCopyJunction(src, tgt.FullPathWithName(src.Name)); // also copies metadata
+    }
+
+    /// <summary>
+    ///     Updates attributes only if Force'd, or if the secondary attributes have changed (which is free to test as we've
+    ///     already read them). Expected to only be called if we aren't otherwise aware that the object has changed, so that
+    ///     we can skip filesystem writes if nothing seems to have changed, for speed. This is why we ignore LastWriteTime.</summary>
+    private static void SyncMetadata(Item src, Item tgt)
+    {
+        if (!ForceRefreshMetadata) // in normal operation we only attempt this if timestamps/attrs changed, and if so we log this change too
+        {
+            if (src.Attrs.LastWriteTime != tgt.Attrs.LastWriteTime)
+                LogError($"SyncMetadata called when LastWriteTime is different: {GetOriginalSrcPath(src.FullPath)}");
+            var same = true;
+            same &= src.Attrs.CreationTime == tgt.Attrs.CreationTime;
+            same &= src.Attrs.LastAccessTime == tgt.Attrs.LastAccessTime;
+            same &= src.Attrs.ChangeTime == tgt.Attrs.ChangeTime;
+            same &= src.Attrs.FileAttributes == tgt.Attrs.FileAttributes;
+            if (same)
+                return;
+            LogChange($"Found modified {tgt.TypeDesc} metadata: ", GetOriginalSrcPath(src.FullPath));
+        }
+        CopyMetadata(src, tgt.FullPath);
     }
 
     /// <summary>Deletes the specified item of any type. Assumes that the item exists.</summary>
@@ -571,56 +580,53 @@ class Program
         }, err => $"Unable to delete {tgt.TypeDesc} ({err}): {tgt.FullPath}");
     }
 
-    /// <summary>Creates the specified directory. Assumes that it doesn't exist.</summary>
-    private static void ActCreateDirectory(string fullName)
-    {
-        TryCatchIoAction("Create directory", fullName, () =>
-        {
-            Filesys.CreateEmptyDirectory(fullName);
-        });
-    }
-
     /// <summary>Creates the specified file symlink. Assumes that it doesn't exist.</summary>
-    private static void ActCreateFileSymlink(string fullName, ReparsePointData rpd)
+    private static void ActCopyFileSymlink(Item src, string tgtFullName)
     {
-        TryCatchIoAction("Create file-symlink", fullName, () =>
+        TryCatchIoAction("Copy file-symlink", tgtFullName, () =>
         {
-            Filesys.CreateEmptyFile(fullName);
-            ReparsePoint.SetSymlinkData(fullName, rpd.SubstituteName, rpd.PrintName, rpd.IsSymlinkRelative);
+            Filesys.CreateEmptyFile(tgtFullName);
+            ReparsePoint.SetSymlinkData(tgtFullName, src.Reparse.SubstituteName, src.Reparse.PrintName, src.Reparse.IsSymlinkRelative);
         });
+        CopyMetadata(src, tgtFullName);
     }
 
     /// <summary>Creates the specified directory symlink. Assumes that it doesn't exist.</summary>
-    private static void ActCreateDirSymlink(string fullName, ReparsePointData rpd)
+    private static void ActCopyDirSymlink(Item src, string tgtFullName)
     {
-        TryCatchIoAction("Create directory-symlink", fullName, () =>
+        TryCatchIoAction("Copy directory-symlink", tgtFullName, () =>
         {
-            Filesys.CreateEmptyDirectory(fullName);
-            ReparsePoint.SetSymlinkData(fullName, rpd.SubstituteName, rpd.PrintName, rpd.IsSymlinkRelative);
+            Filesys.CreateEmptyDirectory(tgtFullName);
+            ReparsePoint.SetSymlinkData(tgtFullName, src.Reparse.SubstituteName, src.Reparse.PrintName, src.Reparse.IsSymlinkRelative);
         });
+        CopyMetadata(src, tgtFullName);
     }
 
-    /// <summary>Creates the specified junction. Assumes that it doesn't exist.</summary>
-    private static void ActCreateJunction(string fullName, ReparsePointData rpd)
+    /// <summary>Copies the specified junction. Assumes that it doesn't exist.</summary>
+    private static void ActCopyJunction(Item src, string tgtFullName)
     {
-        TryCatchIoAction("Create junction", fullName, () =>
+        TryCatchIoAction("Copy junction", tgtFullName, () =>
         {
-            Filesys.CreateEmptyDirectory(fullName);
-            ReparsePoint.SetJunctionData(fullName, rpd.SubstituteName, rpd.PrintName);
+            Filesys.CreateEmptyDirectory(tgtFullName);
+            ReparsePoint.SetJunctionData(tgtFullName, src.Reparse.SubstituteName, src.Reparse.PrintName);
         });
+        CopyMetadata(src, tgtFullName);
     }
 
     /// <summary>Copies a directory to the specified target path. Assumes that the target path does not exist.</summary>
     private static void ActCopyDirectory(Item srcItem, string tgtFullName)
     {
-        ActCreateDirectory(tgtFullName);
+        TryCatchIoAction("Create directory", tgtFullName, () =>
+        {
+            Filesys.CreateEmptyDirectory(tgtFullName);
+        });
         var tgtItem = CreateItem(tgtFullName);
         if (tgtItem == null)
         {
             LogError($"Unable to copy directory: {GetOriginalSrcPath(srcItem.FullPath)}");
             return;
         }
-        SyncDir(srcItem, tgtItem);
+        SyncDir(srcItem, tgtItem); // this will also unconditionally copy metadata for the directory itself, as it has a new LastWriteTime
     }
 
     /// <summary>
@@ -643,6 +649,19 @@ class Program
         {
             Filesys.Rename(tgtTemp, tgtFullName, overwrite: true);
         }, err => $"Unable to rename temp copied file to final destination ({err}): {tgtFullName}");
+    }
+
+    private static void CopyMetadata(Item src, string tgtFullPath)
+    {
+        TryCatchIo(() =>
+        {
+            Filesys.CopySecurityInfo(src.FullPath, tgtFullPath);
+            var attrs = src.Attrs;
+            if (VolumeRoots.Contains(src.FullPath.WithSlash())) // volume roots are marked hidden and system; don't copy that
+                attrs.FileAttributes &= ~(uint)(FILE_FLAGS_AND_ATTRIBUTES.FILE_ATTRIBUTE_HIDDEN | FILE_FLAGS_AND_ATTRIBUTES.FILE_ATTRIBUTE_SYSTEM);
+            Filesys.SetTimestampsAndAttributes(tgtFullPath, attrs);
+        }, err => $"Unable to copy {src.TypeDesc} metadata ({err}): {tgtFullPath}");
+        // not logged as an Action because a force refresh would log too much; as a result, also not called ActCopyMetadata
     }
 
     /// <summary>
@@ -708,12 +727,7 @@ class Item
     {
         FullPath = path;
         Name = Path.GetFileName(path);
-        using var handle = Filesys.OpenHandle(FullPath, (uint)FILE_ACCESS_RIGHTS.FILE_READ_ATTRIBUTES);
-        Attrs = Filesys.GetTimestampsAndAttributes(handle);
-        Reparse = (Attrs.FileAttributes & (uint)FILE_FLAGS_AND_ATTRIBUTES.FILE_ATTRIBUTE_REPARSE_POINT) != 0 ? ReparsePoint.GetReparseData(handle) : null;
-        finishInit();
-        if (Type == ItemType.File)
-            FileLength = Filesys.GetFileLength(handle);
+        Refresh();
     }
 
     /// <summary>Fast init if we have most data - only open the handle if it's a reparse point.</summary>
@@ -725,6 +739,16 @@ class Item
         Reparse = (Attrs.FileAttributes & (uint)FILE_FLAGS_AND_ATTRIBUTES.FILE_ATTRIBUTE_REPARSE_POINT) != 0 ? ReparsePoint.GetReparseData(FullPath) : null;
         FileLength = e.Length;
         finishInit();
+    }
+
+    public void Refresh()
+    {
+        using var handle = Filesys.OpenHandle(FullPath, (uint)FILE_ACCESS_RIGHTS.FILE_READ_ATTRIBUTES);
+        Attrs = Filesys.GetTimestampsAndAttributes(handle);
+        Reparse = (Attrs.FileAttributes & (uint)FILE_FLAGS_AND_ATTRIBUTES.FILE_ATTRIBUTE_REPARSE_POINT) != 0 ? ReparsePoint.GetReparseData(handle) : null;
+        finishInit();
+        if (Type == ItemType.File)
+            FileLength = Filesys.GetFileLength(handle);
     }
 
     private void finishInit()
