@@ -27,6 +27,7 @@ SetFileTime
 NtQueryDirectoryFile
 RtlNtStatusToDosError
 FILE_DIRECTORY_INFORMATION
+CreateDirectory
 GetConsoleWindow
 GetSecurityInfo
 SetSecurityInfo

@@ -52,16 +52,17 @@ static class Filesys
         return openExisting(path, dwDesiredAccess, Semantics);
     }
 
-    /// <summary>Creates a new empty file at the specified path. Throws if the path already exists.</summary>
+    /// <summary>Creates a new empty file at the specified path. Throws if path already exists, or if parent path does not.</summary>
     public static void CreateEmptyFile(string path)
     {
         using var handle = createNew(path, (uint)FILE_ACCESS_RIGHTS.FILE_GENERIC_WRITE, Semantics);
     }
 
-    /// <summary>Creates a new empty directory at the specified path. Throws if the path already exists.</summary>
+    /// <summary>Creates a new empty directory at the specified path. Throws if path exists, or if parent path does not.</summary>
     public static void CreateEmptyDirectory(string path)
     {
-        Directory.CreateDirectory(LongPath(path)); // verified to use backup semantics, i.e. ignoring ACLs if SeRestorePrivilege is enabled
+        if (!PInvoke.CreateDirectory(LongPath(path), null)) // verified to use backup semantics, i.e. ignoring ACLs if SeRestorePrivilege is enabled
+            throw new Win32Exception();
     }
 
     /// <summary>Lists paths contained inside the specified directory. Returns full paths.</summary>
