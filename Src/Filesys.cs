@@ -164,7 +164,8 @@ static class Filesys
         var semantics = FILE_FLAGS_AND_ATTRIBUTES.FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAGS_AND_ATTRIBUTES.FILE_FLAG_SEQUENTIAL_SCAN;
         using var srcH = openExisting(source, (uint)GENERIC_ACCESS_RIGHTS.GENERIC_READ | (uint)FILE_ACCESS_RIGHTS.FILE_WRITE_ATTRIBUTES/*to disable LastAccess updates*/, semantics);
         if (!PInvoke.SetFileTime(srcH, null, new FILETIME { dwLowDateTime = -1, dwHighDateTime = -1 }, null)) // disable Last Access Time updates for the source file
-            throw new Win32Exception();
+            if (WinAPI.GetLastError() != WIN32_ERROR.ERROR_WRITE_PROTECT) // source is properly read-only, such as a VSS snapshot, so Last Access Time is safe anyway
+                throw new Win32Exception();
         PSECURITY_DESCRIPTOR pSecDesc;
         var res = PInvoke.GetSecurityInfo(srcH, SE_OBJECT_TYPE.SE_FILE_OBJECT, SecInfoTemplate, null, null, null, null, &pSecDesc);
         if (res != 0) throw new Win32Exception((int)res);
