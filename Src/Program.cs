@@ -319,15 +319,6 @@ class Program
         {
             return action();
         }
-        catch (UnauthorizedAccessException)
-        {
-            LogError(formatError("unauthorized access"));
-        }
-        catch (FileNotFoundException)
-        {
-            // Can be thrown if permissions are extremely restrictive for some reason
-            LogError(formatError("file not found"));
-        }
         catch (Exception e)
         {
             LogError(formatError($"{e.GetType().Name}, {e.Message}"));
