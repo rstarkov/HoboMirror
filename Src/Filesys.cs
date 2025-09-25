@@ -247,7 +247,8 @@ static class Filesys
 
     /// <summary>
     ///     Sets timestamps and attributes for path. Uses backup semantics to bypass access control checks (requires
-    ///     SeBackup/SeRestore). For reparse points, updates the reparse point itself, not its target.</summary>
+    ///     SeBackup/SeRestore). For reparse points, updates the reparse point itself, not its target. Does not modify Sparse
+    ///     or Compressed attributes.</summary>
     public static unsafe void SetTimestampsAndAttributes(string path, FILE_BASIC_INFO info)
     {
         using var handle = openExisting(path, (uint)FILE_ACCESS_RIGHTS.FILE_WRITE_ATTRIBUTES, Semantics);

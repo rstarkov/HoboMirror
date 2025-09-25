@@ -494,18 +494,27 @@ class Program
         if (!ForceRefreshMetadata) // in normal operation we only attempt this if timestamps/attrs changed, and if so we log this change too
         {
             if (src.Attrs.LastWriteTime != tgt.Attrs.LastWriteTime)
-                LogError($"SyncMetadata called when LastWriteTime is different: {GetOriginalSrcPath(src.FullPath)}");
-            var same = true;
-            same &= src.Attrs.CreationTime == tgt.Attrs.CreationTime;
-            same &= src.Attrs.LastAccessTime == tgt.Attrs.LastAccessTime;
-            same &= src.Attrs.ChangeTime == tgt.Attrs.ChangeTime;
-            same &= src.Attrs.FileAttributes == tgt.Attrs.FileAttributes;
-            if (same)
+                LogCriticalError($"SyncMetadata called when LastWriteTime is different: {GetOriginalSrcPath(src.FullPath)}");
+            var sameWithoutLastAccess = true;
+            sameWithoutLastAccess &= src.Attrs.CreationTime == tgt.Attrs.CreationTime;
+            sameWithoutLastAccess &= src.Attrs.ChangeTime == tgt.Attrs.ChangeTime;
+            sameWithoutLastAccess &= (src.Attrs.FileAttributes & compareFileAttributesMask) == (tgt.Attrs.FileAttributes & compareFileAttributesMask);
+            if (sameWithoutLastAccess && src.Attrs.LastAccessTime == tgt.Attrs.LastAccessTime)
                 return;
-            LogChange($"Found modified {tgt.TypeDesc} metadata: ", GetOriginalSrcPath(src.FullPath));
+            if (!sameWithoutLastAccess)
+                LogChange($"Found modified {tgt.TypeDesc} metadata: ", GetOriginalSrcPath(src.FullPath));
+            if (src.Attrs.CreationTime != tgt.Attrs.CreationTime)
+                LogChange($"    created: {DateTime.FromFileTimeUtc(tgt.Attrs.CreationTime)} -> {DateTime.FromFileTimeUtc(src.Attrs.CreationTime)} (UTC)", null);
+            if (src.Attrs.ChangeTime != tgt.Attrs.ChangeTime)
+                LogChange($"    changed: {DateTime.FromFileTimeUtc(tgt.Attrs.ChangeTime)} -> {DateTime.FromFileTimeUtc(src.Attrs.ChangeTime)} (UTC)", null);
+            if ((src.Attrs.FileAttributes & compareFileAttributesMask) != (tgt.Attrs.FileAttributes & compareFileAttributesMask))
+                LogChange($"    attributes: {fileAttrsStr(tgt.Attrs.FileAttributes)} -> {fileAttrsStr(src.Attrs.FileAttributes)}", null);
         }
         CopyMetadata(src, tgt.FullPath);
     }
+    // we don't copy all attributes, so a raw compare might highlight a change that we can't fix currently (eg compressed or sparse); this mask determines which ones we compare
+    const uint compareFileAttributesMask = (uint)(FILE_FLAGS_AND_ATTRIBUTES.FILE_ATTRIBUTE_READONLY | FILE_FLAGS_AND_ATTRIBUTES.FILE_ATTRIBUTE_HIDDEN | FILE_FLAGS_AND_ATTRIBUTES.FILE_ATTRIBUTE_SYSTEM | FILE_FLAGS_AND_ATTRIBUTES.FILE_ATTRIBUTE_ARCHIVE);
+    static string fileAttrsStr(uint attrs) => string.Join("|", new string[] { (attrs & (uint)FILE_FLAGS_AND_ATTRIBUTES.FILE_ATTRIBUTE_READONLY) > 0 ? "readonly" : null, (attrs & (uint)FILE_FLAGS_AND_ATTRIBUTES.FILE_ATTRIBUTE_HIDDEN) > 0 ? "hidden" : null, (attrs & (uint)FILE_FLAGS_AND_ATTRIBUTES.FILE_ATTRIBUTE_SYSTEM) > 0 ? "system" : null, (attrs & (uint)FILE_FLAGS_AND_ATTRIBUTES.FILE_ATTRIBUTE_ARCHIVE) > 0 ? "archive" : null }.Where(s => s != null));
 
     /// <summary>Deletes the specified item of any type. Assumes that the item exists.</summary>
     private static void ActDelete(Item tgt)
