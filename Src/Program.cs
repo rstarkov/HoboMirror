@@ -656,7 +656,7 @@ class Program
     {
         TryCatchIo(() =>
         {
-            Filesys.CopySecurityInfo(src.FullPath, tgtFullPath);
+            Filesys.CopySecurityInfo(src.FullPath, tgtFullPath, dontPropagateInheritable: src.Type == ItemType.Dir);
             var attrs = src.Attrs;
             if (VolumeRoots.Contains(src.FullPath.WithSlash())) // volume roots are marked hidden and system; don't copy that
                 attrs.FileAttributes &= ~(uint)(FILE_FLAGS_AND_ATTRIBUTES.FILE_ATTRIBUTE_HIDDEN | FILE_FLAGS_AND_ATTRIBUTES.FILE_ATTRIBUTE_SYSTEM);

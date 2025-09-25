@@ -263,16 +263,21 @@ static class Filesys
         OBJECT_SECURITY_INFORMATION.DACL_SECURITY_INFORMATION;
 
     /// <summary>
-    ///     Copies owner, group, DACL and the "don't inherit DACL" flag. Does not propagate inheritable ACEs, which is fast
-    ///     but requires child ACEs to be copied too, or be left inconsistent. Does not copy SACL/inherit flag, integrity
-    ///     label. We copy inherited ACEs as-is, with the "inherited" flag, as that is the expected result of a correct
-    ///     inheritance propagation. This method will not propagate inheritable ACEs from parent directories, which includes
-    ///     ACEs inherited from the mirror root and above - which technically leaves an inconsistent state, but it's a more
-    ///     accurate representation of the mirror source.</summary>
-    public static unsafe void CopySecurityInfo(string source, string destination)
+    ///     Copies owner, group, DACL and the "don't inherit DACL" flag. Does not copy SACL/inherit flag, integrity label. We
+    ///     copy inherited ACEs as-is, with the "inherited" flag, as that is the expected result of a correct inheritance
+    ///     propagation. Inheritable ACEs from parent directories are ignored (which is wrong but gets us a more accurate
+    ///     mirror of the source).</summary>
+    /// <param name="dontPropagateInheritable">
+    ///     Skip propagating inheritable ACEs to children of a directory, which is much faster (but leaves child ACEs
+    ///     inconsistent). This flag can be set on files too, but will fail with Access Denied if the file has read-only
+    ///     attribute set (sigh).</param>
+    public static unsafe void CopySecurityInfo(string source, string destination, bool dontPropagateInheritable)
     {
         using var srcH = openExisting(source, (uint)FILE_ACCESS_RIGHTS.READ_CONTROL, Semantics);
-        using var dstH = openExisting(destination, 0x02000000/*MAXIMUM_ALLOWED means don't propagate*/ | (uint)FILE_ACCESS_RIGHTS.WRITE_DAC | (uint)FILE_ACCESS_RIGHTS.WRITE_OWNER | (uint)FILE_ACCESS_RIGHTS.STANDARD_RIGHTS_WRITE, Semantics);
+        var dstRights = (uint)FILE_ACCESS_RIGHTS.WRITE_DAC | (uint)FILE_ACCESS_RIGHTS.WRITE_OWNER | (uint)FILE_ACCESS_RIGHTS.STANDARD_RIGHTS_WRITE;
+        if (dontPropagateInheritable)
+            dstRights |= 0x02000000; // MAXIMUM_ALLOWED, means don't propagate
+        using var dstH = openExisting(destination, dstRights, Semantics);
 
         PSID owner, group;
         ACL* pdacl;
