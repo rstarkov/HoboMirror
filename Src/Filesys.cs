@@ -146,7 +146,7 @@ static class Filesys
     ///     SeBackup/SeRestore). Read-only flag is ignored on overwrite.</param>
     public static unsafe void Rename(string path, string newpath, bool overwrite = false)
     {
-        using var handle = openExisting(path, (uint)FILE_ACCESS_RIGHTS.DELETE | (uint)FILE_ACCESS_RIGHTS.FILE_READ_ATTRIBUTES | (uint)FILE_ACCESS_RIGHTS.FILE_WRITE_ATTRIBUTES, Semantics);
+        using var handle = openExisting(path, (uint)FILE_ACCESS_RIGHTS.DELETE | (uint)FILE_ACCESS_RIGHTS.FILE_WRITE_ATTRIBUTES, Semantics);
         var attrs = GetTimestampsAndAttributes(handle);
         newpath = LongPath(newpath);
         int bufbytes = FILE_RENAME_INFO.SizeOf(newpath.Length + 1); // including null terminator (though this SizeOf over-estimates size due to alignment)
