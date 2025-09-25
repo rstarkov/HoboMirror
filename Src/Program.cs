@@ -418,12 +418,8 @@ class Program
                     SyncDir(srcItem, tgtItem);
                 else if (srcItem.Type == ItemType.File && tgtItem.Type == ItemType.File)
                     SyncFile(srcItem, tgtItem);
-                else if (srcItem.Type == ItemType.FileSymlink && tgtItem.Type == ItemType.FileSymlink)
-                    SyncFileSymlink(srcItem, tgtItem);
-                else if (srcItem.Type == ItemType.DirSymlink && tgtItem.Type == ItemType.DirSymlink)
-                    SyncDirSymlink(srcItem, tgtItem);
-                else if (srcItem.Type == ItemType.Junction && tgtItem.Type == ItemType.Junction)
-                    SyncJunction(srcItem, tgtItem);
+                else if (srcItem.Type == tgtItem.Type && (srcItem.Type == ItemType.FileSymlink || srcItem.Type == ItemType.DirSymlink || srcItem.Type == ItemType.Junction))
+                    SyncReparse(srcItem, tgtItem);
                 else
                     throw new Exception("unreachable 83149");
             }
@@ -442,12 +438,8 @@ class Program
                     ActCopyDirectory(srcItem, tgtFullPath);
                 else if (srcItem.Type == ItemType.File)
                     ActCopyOrReplaceFile(srcItem.FullPath, tgtFullPath);
-                else if (srcItem.Type == ItemType.FileSymlink)
-                    ActCopyFileSymlink(srcItem, tgtFullPath);
-                else if (srcItem.Type == ItemType.DirSymlink)
-                    ActCopyDirSymlink(srcItem, tgtFullPath);
-                else if (srcItem.Type == ItemType.Junction)
-                    ActCopyJunction(srcItem, tgtFullPath);
+                else if (srcItem.Type == ItemType.FileSymlink || srcItem.Type == ItemType.DirSymlink || srcItem.Type == ItemType.Junction)
+                    ActCopyReparse(srcItem, tgtFullPath);
                 else
                     throw new Exception("unreachable 49612");
             }
@@ -482,54 +474,23 @@ class Program
     }
 
     /// <summary>
-    ///     Compares source and target file symlinks, detects/logs changes, and updates target to match source if necessary.
-    ///     Assumes that both the source and the target exist, and that both are file symlinks.</summary>
-    private static void SyncFileSymlink(Item src, Item tgt)
+    ///     Compares source and target symlink/junction, detects/logs changes, and updates target to match source if necessary.
+    ///     Assumes that both the source and the target exist, and that both are symlink/junction of the same type.</summary>
+    private static void SyncReparse(Item src, Item tgt)
     {
         var srcR = src.Reparse;
         var tgtR = tgt.Reparse;
-        if (srcR.SubstituteName == tgtR.SubstituteName && srcR.PrintName == tgtR.PrintName && srcR.IsSymlinkRelative == tgtR.IsSymlinkRelative)
+        if (srcR.SubstituteName == tgtR.SubstituteName && srcR.PrintName == tgtR.PrintName && srcR.IsSymlinkRelative == tgtR.IsSymlinkRelative /*both sides false for junctions*/)
         {
             SyncMetadata(src, tgt);
             return;
         }
-        LogChange($"Found modified {src.TypeDesc}: ", GetOriginalSrcPath(src.FullPath), whatChanged: $"\r\n    target: {tgtR.SubstituteName} -> {srcR.SubstituteName}\r\n    print name: {tgtR.PrintName} -> {srcR.PrintName}\r\n    relative: {tgtR.IsSymlinkRelative} -> {srcR.IsSymlinkRelative}");
+        var whatChanged = $"\r\n    target: {tgtR.SubstituteName} -> {srcR.SubstituteName}\r\n    print name: {tgtR.PrintName} -> {srcR.PrintName}";
+        if (src.Reparse.IsSymlink)
+            whatChanged += $"\r\n    relative: {tgtR.IsSymlinkRelative} -> {srcR.IsSymlinkRelative}";
+        LogChange($"Found modified {src.TypeDesc}: ", GetOriginalSrcPath(src.FullPath), whatChanged);
         ActDelete(tgt);
-        ActCopyFileSymlink(src, tgt.FullPathSubstName(src.Name)); // also copies metadata
-    }
-
-    /// <summary>
-    ///     Compares source and target directory symlinks, detects/logs changes, and updates target to match source if
-    ///     necessary. Assumes that both the source and the target exist, and that both are directory symlinks.</summary>
-    private static void SyncDirSymlink(Item src, Item tgt)
-    {
-        var srcR = src.Reparse;
-        var tgtR = tgt.Reparse;
-        if (srcR.SubstituteName == tgtR.SubstituteName && srcR.PrintName == tgtR.PrintName && srcR.IsSymlinkRelative == tgtR.IsSymlinkRelative)
-        {
-            SyncMetadata(src, tgt);
-            return;
-        }
-        LogChange($"Found modified {src.TypeDesc}: ", GetOriginalSrcPath(src.FullPath), whatChanged: $"\r\n    target: {tgtR.SubstituteName} -> {srcR.SubstituteName}\r\n    print name: {tgtR.PrintName} -> {srcR.PrintName}\r\n    relative: {tgtR.IsSymlinkRelative} -> {srcR.IsSymlinkRelative}");
-        ActDelete(tgt);
-        ActCopyDirSymlink(src, tgt.FullPathSubstName(src.Name)); // also copies metadata
-    }
-
-    /// <summary>
-    ///     Compares source and target junction, detects/logs changes, and updates target to match source if necessary.
-    ///     Assumes that both the source and the target exist, and that both are junctions.</summary>
-    private static void SyncJunction(Item src, Item tgt)
-    {
-        var srcR = src.Reparse;
-        var tgtR = tgt.Reparse;
-        if (srcR.SubstituteName == tgtR.SubstituteName && srcR.PrintName == tgtR.PrintName)
-        {
-            SyncMetadata(src, tgt);
-            return;
-        }
-        LogChange($"Found modified {src.TypeDesc}: ", GetOriginalSrcPath(src.FullPath), whatChanged: $"\r\n    target: {tgtR.SubstituteName} -> {srcR.SubstituteName}\r\n    print name: {tgtR.PrintName} -> {srcR.PrintName}");
-        ActDelete(tgt);
-        ActCopyJunction(src, tgt.FullPathSubstName(src.Name)); // also copies metadata
+        ActCopyReparse(src, tgt.FullPathSubstName(src.Name)); // also copies metadata
     }
 
     /// <summary>
@@ -581,35 +542,20 @@ class Program
         }, err => $"Unable to delete {tgt.TypeDesc} ({err}): {tgt.FullPath}");
     }
 
-    /// <summary>Creates the specified file symlink. Assumes that it doesn't exist.</summary>
-    private static void ActCopyFileSymlink(Item src, string tgtFullPath)
+    /// <summary>Copies the specified symlink or junction. Assumes that it doesn't exist.</summary>
+    private static void ActCopyReparse(Item src, string tgtFullPath)
     {
-        TryCatchIoAction("Copy file-symlink", tgtFullPath, () =>
+        TryCatchIoAction($"Copy {src.TypeDesc}", tgtFullPath, () =>
         {
-            Filesys.CreateEmptyFile(tgtFullPath);
-            ReparsePoint.SetSymlinkData(tgtFullPath, src.Reparse.SubstituteName, src.Reparse.PrintName, src.Reparse.IsSymlinkRelative);
-        });
-        CopyMetadata(src, tgtFullPath);
-    }
+            if (src.Type == ItemType.FileSymlink)
+                Filesys.CreateEmptyFile(tgtFullPath);
+            else
+                Filesys.CreateEmptyDirectory(tgtFullPath);
 
-    /// <summary>Creates the specified directory symlink. Assumes that it doesn't exist.</summary>
-    private static void ActCopyDirSymlink(Item src, string tgtFullPath)
-    {
-        TryCatchIoAction("Copy directory-symlink", tgtFullPath, () =>
-        {
-            Filesys.CreateEmptyDirectory(tgtFullPath);
-            ReparsePoint.SetSymlinkData(tgtFullPath, src.Reparse.SubstituteName, src.Reparse.PrintName, src.Reparse.IsSymlinkRelative);
-        });
-        CopyMetadata(src, tgtFullPath);
-    }
-
-    /// <summary>Copies the specified junction. Assumes that it doesn't exist.</summary>
-    private static void ActCopyJunction(Item src, string tgtFullPath)
-    {
-        TryCatchIoAction("Copy junction", tgtFullPath, () =>
-        {
-            Filesys.CreateEmptyDirectory(tgtFullPath);
-            ReparsePoint.SetJunctionData(tgtFullPath, src.Reparse.SubstituteName, src.Reparse.PrintName);
+            if (src.Reparse.IsSymlink)
+                ReparsePoint.SetSymlinkData(tgtFullPath, src.Reparse.SubstituteName, src.Reparse.PrintName, src.Reparse.IsSymlinkRelative);
+            else
+                ReparsePoint.SetJunctionData(tgtFullPath, src.Reparse.SubstituteName, src.Reparse.PrintName);
         });
         CopyMetadata(src, tgtFullPath);
     }
