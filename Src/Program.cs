@@ -233,8 +233,9 @@ class Program
 
     public static void LogChange(string text, string path, string whatChanged = null)
     {
-        if (path != null)
-            ChangedDirs.Add(Path.GetDirectoryName(path).WithSlash());
+        var parent = path == null ? null : Path.GetDirectoryName(path) /* can also be null if path is root */;
+        if (parent != null)
+            ChangedDirs.Add(parent.WithSlash());
         var msg = text + path + whatChanged;
         ConsoleUtil.WriteParagraphs(msg.Color(ConsoleColor.Yellow));
         ChangeLog?.WriteLine(msg);
