@@ -137,8 +137,8 @@ static class Filesys
     }
 
     /// <summary>
-    ///     Renames the file or directory. Uses backup semantics to bypass access control checks (requires
-    ///     SeBackup/SeRestore). For reparse points, renames the reparse point itself, not its target.</summary>
+    ///     Renames the file or directory. Uses backup semantics to bypass access control checks (requires SeBackup,
+    ///     SeRestore). For reparse points, renames the reparse point itself, not its target. Preserves timestamps.</summary>
     /// <param name="overwrite">
     ///     If true, will overwrite an existing file at the target path (throws otherwise). If the target is a directory, an
     ///     overwrite attempt fails with "access denied". A directory rename can "overwrite" a file, deleting the file. The
@@ -146,7 +146,8 @@ static class Filesys
     ///     SeBackup/SeRestore). Read-only flag is ignored on overwrite.</param>
     public static unsafe void Rename(string path, string newpath, bool overwrite = false)
     {
-        using var handle = openExisting(path, (uint)FILE_ACCESS_RIGHTS.DELETE, Semantics);
+        using var handle = openExisting(path, (uint)FILE_ACCESS_RIGHTS.DELETE | (uint)FILE_ACCESS_RIGHTS.FILE_READ_ATTRIBUTES | (uint)FILE_ACCESS_RIGHTS.FILE_WRITE_ATTRIBUTES, Semantics);
+        var attrs = GetTimestampsAndAttributes(handle);
         newpath = LongPath(newpath);
         int bufbytes = FILE_RENAME_INFO.SizeOf(newpath.Length + 1); // including null terminator (though this SizeOf over-estimates size due to alignment)
         byte* buf = stackalloc byte[bufbytes];
@@ -159,6 +160,7 @@ static class Filesys
         tgtSpan[newpath.Length] = '\0';
         if (!PInvoke.SetFileInformationByHandle(handle, FILE_INFO_BY_HANDLE_CLASS.FileRenameInfoEx, info, (uint)bufbytes))
             throw new Win32Exception();
+        SetTimestampsAndAttributes(handle, attrs); // rename modifies ChangeTime; change it back
     }
 
     /// <summary>
@@ -266,10 +268,8 @@ static class Filesys
         OBJECT_SECURITY_INFORMATION.DACL_SECURITY_INFORMATION;
 
     /// <summary>
-    ///     Copies owner, group, DACL and the "don't inherit DACL" flag. Does not copy SACL/inherit flag, integrity label. We
-    ///     copy inherited ACEs as-is, with the "inherited" flag, as that is the expected result of a correct inheritance
-    ///     propagation. Inheritable ACEs from parent directories are ignored (which is wrong but gets us a more accurate
-    ///     mirror of the source).</summary>
+    ///     Copies owner, group, DACL and the "don't inherit DACL" flag. Does not copy SACL/inherit flag, integrity label.
+    ///     Normal DACLs are copied, but inherited DACLs are not; they are instead propagated from the parent directory.</summary>
     /// <param name="dontPropagateInheritable">
     ///     Skip propagating inheritable ACEs to children of a directory, which is much faster (but leaves child ACEs
     ///     inconsistent). This flag can be set on files too, but will fail with Access Denied if the file has read-only
