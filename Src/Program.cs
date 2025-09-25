@@ -177,10 +177,10 @@ class Program
                 foreach (var task in tasks)
                 {
                     GetOriginalSrcPath = str => str.Replace(sourcePaths[task.FromVolume], task.FromVolume).Replace(@"\\", @"\");
-                    var srcItem = CreateItem(Path.Combine(sourcePaths[task.FromVolume], task.FromPath.Substring(task.FromVolume.Length)).WithSlash());
-                    var tgtItem = CreateItem(task.ToPath.WithSlash()); // must exist because we checked for the guard file
-                    if (srcItem != null && tgtItem != null)
-                        SyncDir(srcItem, tgtItem, true);
+                    var src = CreateItem(Path.Combine(sourcePaths[task.FromVolume], task.FromPath.Substring(task.FromVolume.Length)).WithSlash());
+                    var tgt = CreateItem(task.ToPath.WithSlash()); // must exist because we checked for the guard file
+                    if (src != null && tgt != null)
+                        SyncDir(src, tgt, true);
                     else
                         LogError($"Unable to execute mirror task: {task.FromPath}");
                 }
@@ -353,16 +353,16 @@ class Program
     ///     When toplevel is true, the items may be any combination of real dirs, junctions or directory symlinks. Otherwise
     ///     it's always dirs. Skips copying attributes for the top level dir, only because the current implementation can't
     ///     optionally set them on the symlink/junction target (todo).</remarks>
-    private static void SyncDir(Item src, Item tgt, bool toplevel = false)
+    private static void SyncDir(Item srcDir, Item tgtDir, bool toplevel = false)
     {
         try
         {
-            StatusText = GetOriginalSrcPath(src.FullPath) + " (enumerate)";
-            var srcItems = GetDirectoryItems(src.FullPath);
-            var tgtItems = GetDirectoryItems(tgt.FullPath);
+            StatusText = GetOriginalSrcPath(srcDir.FullPath) + " (enumerate)";
+            var srcItems = GetDirectoryItems(srcDir.FullPath);
+            var tgtItems = GetDirectoryItems(tgtDir.FullPath);
             if (srcItems == null || tgtItems == null)
             {
-                LogError($"Unable to mirror directory: {GetOriginalSrcPath(src.FullPath)}");
+                LogError($"Unable to mirror directory: {GetOriginalSrcPath(srcDir.FullPath)}");
                 return;
             }
             var srcDict = srcItems.ToDictionary(t => t.Name, StringComparer.OrdinalIgnoreCase);
@@ -395,9 +395,9 @@ class Program
                 var srcItem = srcDict.Get(tgtItem.Name, null);
                 if (srcItem != null && srcItem.Type == tgtItem.Type)
                     continue;
-                StatusText = GetOriginalSrcPath(Path.Combine(src.FullPath, tgtItem.Name)) + " (delete)";
+                StatusText = GetOriginalSrcPath(Path.Combine(srcDir.FullPath, tgtItem.Name)) + " (delete)";
                 if (srcItem == null)
-                    LogChange($"Found deleted {tgtItem.TypeDesc}: ", GetOriginalSrcPath(Path.Combine(src.FullPath, tgtItem.Name)));
+                    LogChange($"Found deleted {tgtItem.TypeDesc}: ", GetOriginalSrcPath(Path.Combine(srcDir.FullPath, tgtItem.Name)));
                 else
                     LogChange($"Found {srcItem.TypeDesc} which used to be a {tgtItem.TypeDesc}: ", GetOriginalSrcPath(srcItem.FullPath));
                 ActDelete(tgtItem);
@@ -437,33 +437,33 @@ class Program
                 StatusText = GetOriginalSrcPath(srcItem.FullPath) + " (copy)";
 
                 LogChange($"Found new {srcItem.TypeDesc}: ", GetOriginalSrcPath(srcItem.FullPath));
-                var tgtFullName = Path.Combine(tgt.FullPath, srcItem.Name);
+                var tgtFullPath = Path.Combine(tgtDir.FullPath, srcItem.Name);
                 if (srcItem.Type == ItemType.Dir)
-                    ActCopyDirectory(srcItem, tgtFullName);
+                    ActCopyDirectory(srcItem, tgtFullPath);
                 else if (srcItem.Type == ItemType.File)
-                    ActCopyOrReplaceFile(srcItem.FullPath, tgtFullName);
+                    ActCopyOrReplaceFile(srcItem.FullPath, tgtFullPath);
                 else if (srcItem.Type == ItemType.FileSymlink)
-                    ActCopyFileSymlink(srcItem, tgtFullName);
+                    ActCopyFileSymlink(srcItem, tgtFullPath);
                 else if (srcItem.Type == ItemType.DirSymlink)
-                    ActCopyDirSymlink(srcItem, tgtFullName);
+                    ActCopyDirSymlink(srcItem, tgtFullPath);
                 else if (srcItem.Type == ItemType.Junction)
-                    ActCopyJunction(srcItem, tgtFullName);
+                    ActCopyJunction(srcItem, tgtFullPath);
                 else
                     throw new Exception("unreachable 49612");
             }
 
             // Phase 4: metadata on the directory itself
-            TryCatchIo(tgt.Refresh, err => $"Unable to refresh directory attributes ({err}): {tgt.FullPath}"); // todo: we could track changes explicitly instead of re-reading last modified time
-            if (src.Attrs.LastWriteTime != tgt.Attrs.LastWriteTime)
-                CopyMetadata(src, tgt.FullPath); // directory has definitely changed (includes ActCopyDirectory path), so just copy unconditionally
+            TryCatchIo(tgtDir.Refresh, err => $"Unable to refresh directory attributes ({err}): {tgtDir.FullPath}"); // todo: we could track changes explicitly instead of re-reading last modified time
+            if (srcDir.Attrs.LastWriteTime != tgtDir.Attrs.LastWriteTime)
+                CopyMetadata(srcDir, tgtDir.FullPath); // directory has definitely changed (includes ActCopyDirectory path), so just copy unconditionally
             else
-                SyncMetadata(src, tgt); // doesn't look like any changes were made; update metadata only if Force'd or other attrs have changed
+                SyncMetadata(srcDir, tgtDir); // doesn't look like any changes were made; update metadata only if Force'd or other attrs have changed
         }
         catch (Exception e)
         {
             // none of the above code is supposed to throw under any known circumstances
-            LogError($"Unable to sync directory ({e.Message}): {GetOriginalSrcPath(src.FullPath)}");
-            LogCriticalError($"SyncDir: {GetOriginalSrcPath(src.FullPath)}\r\n    {e.GetType().Name}: {e.Message}\r\n{e.StackTrace}");
+            LogError($"Unable to sync directory ({e.Message}): {GetOriginalSrcPath(srcDir.FullPath)}");
+            LogCriticalError($"SyncDir: {GetOriginalSrcPath(srcDir.FullPath)}\r\n    {e.GetType().Name}: {e.Message}\r\n{e.StackTrace}");
         }
     }
 
@@ -478,7 +478,7 @@ class Program
             return;
         }
         LogChange($"Found modified file: ", GetOriginalSrcPath(src.FullPath), whatChanged: $"\r\n    length: {tgt.FileLength:#,0} -> {src.FileLength:#,0}\r\n    modified: {DateTime.FromFileTimeUtc(tgt.Attrs.LastWriteTime)} -> {DateTime.FromFileTimeUtc(src.Attrs.LastWriteTime)} (UTC)");
-        ActCopyOrReplaceFile(src.FullPath, tgt.FullPathWithName(src.Name)); // also copies metadata
+        ActCopyOrReplaceFile(src.FullPath, tgt.FullPathSubstName(src.Name)); // also copies metadata
     }
 
     /// <summary>
@@ -495,7 +495,7 @@ class Program
         }
         LogChange($"Found modified {src.TypeDesc}: ", GetOriginalSrcPath(src.FullPath), whatChanged: $"\r\n    target: {tgtR.SubstituteName} -> {srcR.SubstituteName}\r\n    print name: {tgtR.PrintName} -> {srcR.PrintName}\r\n    relative: {tgtR.IsSymlinkRelative} -> {srcR.IsSymlinkRelative}");
         ActDelete(tgt);
-        ActCopyFileSymlink(src, tgt.FullPathWithName(src.Name)); // also copies metadata
+        ActCopyFileSymlink(src, tgt.FullPathSubstName(src.Name)); // also copies metadata
     }
 
     /// <summary>
@@ -512,7 +512,7 @@ class Program
         }
         LogChange($"Found modified {src.TypeDesc}: ", GetOriginalSrcPath(src.FullPath), whatChanged: $"\r\n    target: {tgtR.SubstituteName} -> {srcR.SubstituteName}\r\n    print name: {tgtR.PrintName} -> {srcR.PrintName}\r\n    relative: {tgtR.IsSymlinkRelative} -> {srcR.IsSymlinkRelative}");
         ActDelete(tgt);
-        ActCopyDirSymlink(src, tgt.FullPathWithName(src.Name)); // also copies metadata
+        ActCopyDirSymlink(src, tgt.FullPathSubstName(src.Name)); // also copies metadata
     }
 
     /// <summary>
@@ -529,7 +529,7 @@ class Program
         }
         LogChange($"Found modified {src.TypeDesc}: ", GetOriginalSrcPath(src.FullPath), whatChanged: $"\r\n    target: {tgtR.SubstituteName} -> {srcR.SubstituteName}\r\n    print name: {tgtR.PrintName} -> {srcR.PrintName}");
         ActDelete(tgt);
-        ActCopyJunction(src, tgt.FullPathWithName(src.Name)); // also copies metadata
+        ActCopyJunction(src, tgt.FullPathSubstName(src.Name)); // also copies metadata
     }
 
     /// <summary>
@@ -582,65 +582,65 @@ class Program
     }
 
     /// <summary>Creates the specified file symlink. Assumes that it doesn't exist.</summary>
-    private static void ActCopyFileSymlink(Item src, string tgtFullName)
+    private static void ActCopyFileSymlink(Item src, string tgtFullPath)
     {
-        TryCatchIoAction("Copy file-symlink", tgtFullName, () =>
+        TryCatchIoAction("Copy file-symlink", tgtFullPath, () =>
         {
-            Filesys.CreateEmptyFile(tgtFullName);
-            ReparsePoint.SetSymlinkData(tgtFullName, src.Reparse.SubstituteName, src.Reparse.PrintName, src.Reparse.IsSymlinkRelative);
+            Filesys.CreateEmptyFile(tgtFullPath);
+            ReparsePoint.SetSymlinkData(tgtFullPath, src.Reparse.SubstituteName, src.Reparse.PrintName, src.Reparse.IsSymlinkRelative);
         });
-        CopyMetadata(src, tgtFullName);
+        CopyMetadata(src, tgtFullPath);
     }
 
     /// <summary>Creates the specified directory symlink. Assumes that it doesn't exist.</summary>
-    private static void ActCopyDirSymlink(Item src, string tgtFullName)
+    private static void ActCopyDirSymlink(Item src, string tgtFullPath)
     {
-        TryCatchIoAction("Copy directory-symlink", tgtFullName, () =>
+        TryCatchIoAction("Copy directory-symlink", tgtFullPath, () =>
         {
-            Filesys.CreateEmptyDirectory(tgtFullName);
-            ReparsePoint.SetSymlinkData(tgtFullName, src.Reparse.SubstituteName, src.Reparse.PrintName, src.Reparse.IsSymlinkRelative);
+            Filesys.CreateEmptyDirectory(tgtFullPath);
+            ReparsePoint.SetSymlinkData(tgtFullPath, src.Reparse.SubstituteName, src.Reparse.PrintName, src.Reparse.IsSymlinkRelative);
         });
-        CopyMetadata(src, tgtFullName);
+        CopyMetadata(src, tgtFullPath);
     }
 
     /// <summary>Copies the specified junction. Assumes that it doesn't exist.</summary>
-    private static void ActCopyJunction(Item src, string tgtFullName)
+    private static void ActCopyJunction(Item src, string tgtFullPath)
     {
-        TryCatchIoAction("Copy junction", tgtFullName, () =>
+        TryCatchIoAction("Copy junction", tgtFullPath, () =>
         {
-            Filesys.CreateEmptyDirectory(tgtFullName);
-            ReparsePoint.SetJunctionData(tgtFullName, src.Reparse.SubstituteName, src.Reparse.PrintName);
+            Filesys.CreateEmptyDirectory(tgtFullPath);
+            ReparsePoint.SetJunctionData(tgtFullPath, src.Reparse.SubstituteName, src.Reparse.PrintName);
         });
-        CopyMetadata(src, tgtFullName);
+        CopyMetadata(src, tgtFullPath);
     }
 
     /// <summary>Copies a directory to the specified target path. Assumes that the target path does not exist.</summary>
-    private static void ActCopyDirectory(Item srcItem, string tgtFullName)
+    private static void ActCopyDirectory(Item src, string tgtFullPath)
     {
-        TryCatchIoAction("Create directory", tgtFullName, () =>
+        TryCatchIoAction("Create directory", tgtFullPath, () =>
         {
-            Filesys.CreateEmptyDirectory(tgtFullName);
+            Filesys.CreateEmptyDirectory(tgtFullPath);
         });
-        var tgtItem = CreateItem(tgtFullName);
-        if (tgtItem == null)
+        var tgt = CreateItem(tgtFullPath);
+        if (tgt == null)
         {
-            LogError($"Unable to copy directory: {GetOriginalSrcPath(srcItem.FullPath)}");
+            LogError($"Unable to copy directory: {GetOriginalSrcPath(src.FullPath)}");
             return;
         }
-        SyncDir(srcItem, tgtItem); // this will also unconditionally copy metadata for the directory itself, as it has a new LastWriteTime
+        SyncDir(src, tgt); // this will also unconditionally copy metadata for the directory itself, as it has a new LastWriteTime
     }
 
     /// <summary>
     ///     Copies a file to the specified path. Always copies to a temporary file in the target directory first, followed by
     ///     a rename, to avoid errors leaving a half finished file looking like the real thing. Unlike other "act" methods,
     ///     this method allows the target file to already exist, and will replace it on successful copy.</summary>
-    private static void ActCopyOrReplaceFile(string srcFullName, string tgtFullName)
+    private static void ActCopyOrReplaceFile(string srcFullPath, string tgtFullPath)
     {
-        var tgtTemp = Path.Combine(Path.GetDirectoryName(tgtFullName), $"~HoboMirror-{Rnd.GenerateString(16)}.tmp");
+        var tgtTemp = Path.Combine(Path.GetDirectoryName(tgtFullPath), $"~HoboMirror-{Rnd.GenerateString(16)}.tmp");
 
-        bool success = TryCatchIoAction("Copy file", GetOriginalSrcPath(srcFullName), () =>
+        bool success = TryCatchIoAction("Copy file", GetOriginalSrcPath(srcFullPath), () =>
         {
-            Filesys.CopyFile(srcFullName, tgtTemp, CopyProgress); // also copies timestamps, attributes, and security
+            Filesys.CopyFile(srcFullPath, tgtTemp, CopyProgress); // also copies timestamps, attributes, and security
             return true;
         });
         if (!success)
@@ -648,8 +648,8 @@ class Program
 
         TryCatchIo(() =>
         {
-            Filesys.Rename(tgtTemp, tgtFullName, overwrite: true);
-        }, err => $"Unable to rename temp copied file to final destination ({err}): {tgtFullName}");
+            Filesys.Rename(tgtTemp, tgtFullPath, overwrite: true);
+        }, err => $"Unable to rename temp copied file to final destination ({err}): {tgtFullPath}");
     }
 
     private static void CopyMetadata(Item src, string tgtFullPath)
@@ -776,7 +776,7 @@ class Item
 
     /// <summary>
     ///     Replaces the name in this item's full path with the target name (for the purpose of perserving capitalisation).</summary>
-    public string FullPathWithName(string name)
+    public string FullPathSubstName(string name)
     {
         return Path.Combine(Path.GetDirectoryName(FullPath), name);
     }
