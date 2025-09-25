@@ -21,11 +21,17 @@ static class Filesys
 
     /// <summary>
     ///     Calls PInvoke.CreateFile with OpenExisting disp. Handles long paths, and ensures the handle is valid or throws.</summary>
-    private static unsafe SafeFileHandle openExisting(string lpFileName, uint dwDesiredAccess, FILE_FLAGS_AND_ATTRIBUTES dwFlagsAndAttributes)
+    private static unsafe SafeFileHandle openExisting(string lpFileName, uint dwDesiredAccess, FILE_FLAGS_AND_ATTRIBUTES dwFlagsAndAttributes, bool noUpdateLastAccess = false)
     {
+        if (noUpdateLastAccess)
+            dwDesiredAccess |= (uint)FILE_ACCESS_RIGHTS.FILE_WRITE_ATTRIBUTES;
         var handle = PInvoke.CreateFile(LongPath(lpFileName), dwDesiredAccess, FileShareAll, null, FILE_CREATION_DISPOSITION.OPEN_EXISTING, dwFlagsAndAttributes, null);
         if (handle.IsInvalid)
             throw new Win32Exception();
+        if (noUpdateLastAccess)
+            if (!PInvoke.SetFileTime(handle, null, new FILETIME { dwLowDateTime = -1, dwHighDateTime = -1 }, null))
+                if (WinAPI.GetLastError() != WIN32_ERROR.ERROR_WRITE_PROTECT) // this means the source is properly read-only, such as a VSS snapshot, so Last Access Time won't be changed anyway
+                    throw new Win32Exception();
         return handle;
     }
     /// <summary>Calls PInvoke.CreateFile with CreateNew disp. Handles long paths, and ensures the handle is valid or throws.</summary>
@@ -68,7 +74,7 @@ static class Filesys
     /// <summary>Lists paths contained inside the specified directory. Returns full paths.</summary>
     public static unsafe List<DirEntry> ListDirectory(string path, int buflen = 4096)
     {
-        using var dsh = openExisting(path, (uint)FILE_ACCESS_RIGHTS.FILE_LIST_DIRECTORY, FILE_FLAGS_AND_ATTRIBUTES.FILE_FLAG_BACKUP_SEMANTICS);
+        using var dsh = openExisting(path, (uint)FILE_ACCESS_RIGHTS.FILE_LIST_DIRECTORY, FILE_FLAGS_AND_ATTRIBUTES.FILE_FLAG_BACKUP_SEMANTICS, noUpdateLastAccess: true);
         var dh = (HANDLE)dsh.DangerousGetHandle();
         var buffer = new byte[buflen]; // eliminating this alloc improves perf by only 1% in the absolute best case
         var results = new List<DirEntry>();
@@ -162,10 +168,7 @@ static class Filesys
     public static unsafe void CopyFile(string source, string destination, Action<CopyFileProgress> progress = null)
     {
         var semantics = FILE_FLAGS_AND_ATTRIBUTES.FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAGS_AND_ATTRIBUTES.FILE_FLAG_SEQUENTIAL_SCAN;
-        using var srcH = openExisting(source, (uint)GENERIC_ACCESS_RIGHTS.GENERIC_READ | (uint)FILE_ACCESS_RIGHTS.FILE_WRITE_ATTRIBUTES/*to disable LastAccess updates*/, semantics);
-        if (!PInvoke.SetFileTime(srcH, null, new FILETIME { dwLowDateTime = -1, dwHighDateTime = -1 }, null)) // disable Last Access Time updates for the source file
-            if (WinAPI.GetLastError() != WIN32_ERROR.ERROR_WRITE_PROTECT) // source is properly read-only, such as a VSS snapshot, so Last Access Time is safe anyway
-                throw new Win32Exception();
+        using var srcH = openExisting(source, (uint)GENERIC_ACCESS_RIGHTS.GENERIC_READ, semantics, noUpdateLastAccess: true);
         PSECURITY_DESCRIPTOR pSecDesc;
         var res = PInvoke.GetSecurityInfo(srcH, SE_OBJECT_TYPE.SE_FILE_OBJECT, SecInfoTemplate, null, null, null, null, &pSecDesc);
         if (res != 0) throw new Win32Exception((int)res);
