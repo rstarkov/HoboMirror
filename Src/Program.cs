@@ -25,7 +25,6 @@ class Program
     static Settings Settings => SettingsFile?.Settings; // can be null if running without settings file command option
     static List<string> IgnorePaths;
     static HashSet<string> IgnoreDirNames;
-    static HashSet<string> VolumeRoots;
     static bool UseVolumeShadowCopy = true;
     static bool ForceRefreshMetadata = true;
     static int Errors = 0;
@@ -152,11 +151,8 @@ class Program
 
             // Perform the mirroring
             var volumes = tasks.GroupBy(t => t.FromVolume).Select(g => g.Key).ToArray();
-            VolumeRoots = volumes.Select(v => v.WithSlash()).ToHashSet(StringComparer.OrdinalIgnoreCase);
             using (var vsc = UseVolumeShadowCopy ? new VolumeShadowCopy(volumes) : null)
             {
-                if (UseVolumeShadowCopy)
-                    VolumeRoots.AddRange(vsc.Snapshots.Values.Select(s => s.SnapshotPath.WithSlash()));
                 var sourcePaths = UseVolumeShadowCopy ? vsc.Snapshots.ToDictionary(kvp => kvp.Key, kvp => kvp.Value.SnapshotPath) : volumes.ToDictionary(vol => vol, vol => vol);
                 LogAction($"Configuration:");
                 foreach (var task in tasks)
@@ -177,8 +173,8 @@ class Program
                 foreach (var task in tasks)
                 {
                     GetOriginalSrcPath = str => str.Replace(sourcePaths[task.FromVolume], task.FromVolume).Replace(@"\\", @"\");
-                    var src = CreateItem(Path.Combine(sourcePaths[task.FromVolume], task.FromPath.Substring(task.FromVolume.Length)).WithSlash());
-                    var tgt = CreateItem(task.ToPath.WithSlash()); // must exist because we checked for the guard file
+                    var src = CreateItem(Path.Combine(sourcePaths[task.FromVolume], task.FromPath.Substring(task.FromVolume.Length)).WithSlash(), isRoot: true);
+                    var tgt = CreateItem(task.ToPath.WithSlash(), isRoot: true); // must exist because we checked for the guard file
                     if (src != null && tgt != null)
                         SyncDir(src, tgt, true);
                     else
@@ -568,7 +564,7 @@ class Program
         {
             Filesys.CreateEmptyDirectory(tgtFullPath);
         });
-        var tgt = CreateItem(tgtFullPath);
+        var tgt = CreateItem(tgtFullPath, src.IsRoot);
         if (tgt == null)
         {
             LogError($"Unable to copy directory: {GetOriginalSrcPath(src.FullPath)}");
@@ -604,10 +600,7 @@ class Program
         TryCatchIo(() =>
         {
             Filesys.CopySecurityInfo(src.FullPath, tgtFullPath, dontPropagateInheritable: src.Type == ItemType.Dir);
-            var attrs = src.Attrs;
-            if (VolumeRoots.Contains(src.FullPath.WithSlash())) // volume roots are marked hidden and system; don't copy that
-                attrs.FileAttributes &= ~(uint)(FILE_FLAGS_AND_ATTRIBUTES.FILE_ATTRIBUTE_HIDDEN | FILE_FLAGS_AND_ATTRIBUTES.FILE_ATTRIBUTE_SYSTEM);
-            Filesys.SetTimestampsAndAttributes(tgtFullPath, attrs);
+            Filesys.SetTimestampsAndAttributes(tgtFullPath, src.Attrs);
         }, err => $"Unable to copy {src.TypeDesc} metadata ({err}): {tgtFullPath}");
         // not logged as an Action because a force refresh would log too much; as a result, also not called ActCopyMetadata
     }
@@ -633,9 +626,9 @@ class Program
     ///     Determines what type of item this filesystem entry is, while handling any potential errors. On failure, logs an
     ///     appropriate message and returns null (which the caller is expected to handle by skipping whatever they were going
     ///     to do with this item). Slow variant, must open file handle.</summary>
-    private static Item CreateItem(string path)
+    private static Item CreateItem(string path, bool isRoot)
     {
-        return TryCatchIo(() => new Item(path), err => $"Unable to determine filesystem entry type ({err}): {path}");
+        return TryCatchIo(() => new Item(path, isRoot), err => $"Unable to determine filesystem entry type ({err}): {path}");
     }
     /// <summary>
     ///     Determines what type of item this filesystem entry is, while handling any potential errors. On failure, logs an
@@ -663,18 +656,20 @@ class Item
 {
     public string FullPath { get; private set; }
     public string Name { get; private set; }
+    public bool IsRoot { get; private set; } // alters the behaviour slightly for the mirror root folder
     public ItemType Type { get; private set; }
     public ReparsePointData Reparse { get; private set; } // null if not a symlink or a junction
-    public FILE_BASIC_INFO Attrs { get; private set; }
+    public FILE_BASIC_INFO Attrs; // bit naughty that it's a field; easier to modify in place
     public long FileLength { get; private set; }
     public string TypeDesc => Type == ItemType.Dir ? "directory" : Type == ItemType.DirSymlink ? "directory-symlink" : Type == ItemType.File ? "file" : Type == ItemType.FileSymlink ? "file-symlink" : Type == ItemType.Junction ? "junction" : throw new Exception("unreachable 63161");
     public override string ToString() => $"{TypeDesc}: {FullPath}{(Reparse == null ? "" : (" -> " + Reparse.SubstituteName))}";
 
     /// <summary>Slow init if all we have is a path - must open the handle.</summary>
-    public Item(string path)
+    public Item(string path, bool isRoot)
     {
         FullPath = path;
         Name = Path.GetFileName(path);
+        IsRoot = isRoot;
         Refresh();
     }
 
@@ -701,6 +696,8 @@ class Item
 
     private void finishInit()
     {
+        if (IsRoot) // volume roots are marked hidden and system; don't copy that. Side effect: we also ignore hidden/system on a mirror root that is not a volume root
+            Attrs.FileAttributes &= ~(uint)(FILE_FLAGS_AND_ATTRIBUTES.FILE_ATTRIBUTE_HIDDEN | FILE_FLAGS_AND_ATTRIBUTES.FILE_ATTRIBUTE_SYSTEM);
         bool isDir = (Attrs.FileAttributes & (uint)FILE_FLAGS_AND_ATTRIBUTES.FILE_ATTRIBUTE_DIRECTORY) != 0;
         if (Reparse != null)
         {
