@@ -7,6 +7,7 @@ class Settings
     public MirrorTask[] MirrorTasks = [];
     public string[] IgnoreDirNames = [];
     public string[] IgnorePaths = [];
+    public string UrlPingTemplate = null;
 }
 
 class MirrorTask

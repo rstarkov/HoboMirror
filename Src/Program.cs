@@ -89,6 +89,7 @@ class Program
         if (Windows.Win32.PInvoke.GetConsoleWindow() != HWND.Null)
             new Thread(StatusUpdaterThread) { IsBackground = true }.Start();
 
+        bool started = false;
         try
         {
             // Log header
@@ -150,6 +151,7 @@ class Program
             }
 
             // Perform the mirroring
+            started = true;
             var volumes = tasks.GroupBy(t => t.FromVolume).Select(g => g.Key).ToArray();
             using (var vsc = UseVolumeShadowCopy ? new VolumeShadowCopy(volumes) : null)
             {
@@ -208,6 +210,24 @@ class Program
 #endif
         finally
         {
+            // Ping URL if configured
+            var url = Settings?.UrlPingTemplate;
+            if (started && url != null)
+            {
+                url = url
+                    .Replace("{{{NoCriticalErrors}}}", CriticalErrors == 0 ? "1" : "0")
+                    .Replace("{{{NoErrors}}}", (CriticalErrors == 0 && Errors == 0) ? "1" : "0");
+                try
+                {
+                    using var hc = new HttpClient();
+                    hc.GetAsync(url).GetAwaiter().GetResult();
+                    LogAction($"Pinged {url}");
+                }
+                catch (Exception e)
+                {
+                    LogError($"Unable to ping {url}: {e.Message}");
+                }
+            }
             // Close log files
             if (Args.LogPath != null)
             {
