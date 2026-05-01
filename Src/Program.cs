@@ -648,7 +648,11 @@ class Program
     ///     to do with this item). Slow variant, must open file handle.</summary>
     private static Item CreateItem(string path, bool isRoot)
     {
-        return TryCatchIo(() => new Item(path, isRoot), err => $"Unable to determine filesystem entry type ({err}): {path}");
+        return TryCatchIo(() =>
+        {
+            try { return new Item(path, isRoot); }
+            catch (Item.SkippedReparseException ex) { LogAction(ex.Message); return null; }
+        }, err => $"Unable to determine filesystem entry type ({err}): {path}");
     }
     /// <summary>
     ///     Determines what type of item this filesystem entry is, while handling any potential errors. On failure, logs an
@@ -656,7 +660,11 @@ class Program
     ///     to do with this item). Fast variant, initialised from dir enumeration.</summary>
     private static Item CreateItem(string parentPath, Filesys.DirEntry e)
     {
-        return TryCatchIo(() => new Item(parentPath, e), err => $"Unable to determine filesystem entry type ({err}): {Path.Combine(parentPath, e.Name)}");
+        return TryCatchIo(() =>
+        {
+            try { return new Item(parentPath, e); }
+            catch (Item.SkippedReparseException ex) { LogAction(ex.Message); return null; }
+        }, err => $"Unable to determine filesystem entry type ({err}): {Path.Combine(parentPath, e.Name)}");
     }
 
     private static DateTime lastProgress;
@@ -674,6 +682,12 @@ enum ItemType { File, Dir, FileSymlink, DirSymlink, Junction }
 
 class Item
 {
+    private static readonly HashSet<uint> KnownSkippedReparseTags = [
+        0x80000023u, // IO_REPARSE_TAG_WCI_LINK, used by Docker / Windows Container Isolation
+    ];
+
+    public class SkippedReparseException(string message) : Exception(message);
+
     public string FullPath { get; private set; }
     public string Name { get; private set; }
     public bool IsRoot { get; private set; } // alters the behaviour slightly for the mirror root folder
@@ -726,8 +740,10 @@ class Item
                 Type = ItemType.Junction;
             else if (Reparse.IsSymlink)
                 Type = isDir ? ItemType.DirSymlink : ItemType.FileSymlink;
+            else if (KnownSkippedReparseTags.Contains(Reparse.ReparseTag))
+                throw new SkippedReparseException($"Skipping reparse point with tag 0x{Reparse.ReparseTag:X8}: {FullPath}");
             else
-                throw new Exception($"unrecognized reparse point type {Reparse.ReparseTag}");
+                throw new Exception($"unrecognized reparse point type 0x{Reparse.ReparseTag:X8}");
         }
         else if (isDir)
         {
